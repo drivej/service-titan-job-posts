@@ -1,0 +1,15 @@
+{
+  "$schema": "https://schemas.wp.org/trunk/block.json",
+  "apiVersion": 3,
+  "name": "st-sync/job-details",
+  "title": "ST Job Details",
+  "category": "widgets",
+  "icon": "cloud",
+  "description": "Displays specific data from a ServiceTitan Job post.",
+  "usesContext": ["postId", "postType"],
+  "supports": {
+    "html": false
+  },
+  "textdomain": "service-titan-job-post",
+  "editorScript": "file:./index.js"
+}

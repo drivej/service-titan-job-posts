@@ -1,0 +1,28 @@
+# Secrets and local environment overrides
+.env
+.env.*
+!.env.example
+
+# Dependencies
+node_modules/
+
+# Logs and test output
+*.log
+coverage/
+.nyc_output/
+
+# Build and temporary output
+dist/
+build/
+tmp/
+temp/
+
+# OS metadata
+.DS_Store
+Thumbs.db
+
+# Editor settings
+.idea/
+.vscode/
+*.swp
+*.swo
