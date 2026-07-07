@@ -5,6 +5,7 @@
   "description": "Hosted entitlement, credential, and sync-claim service for ServiceTitan Local Job Content.",
   "main": "src/server.js",
   "scripts": {
+    "migrate": "node scripts/migrate.js",
     "start": "node src/server.js",
     "test": "node --test"
   },

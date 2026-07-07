@@ -80,6 +80,28 @@ Production should apply `migrations/001_init.sql` to PostgreSQL and set
 `DATABASE_URL`. Without `DATABASE_URL`, the server starts the in-memory
 development store only.
 
+## Migrations and deploy
+
+Run database migrations before starting the service:
+
+```bash
+npm ci
+npm run migrate
+npm start
+```
+
+The included Dockerfile packages the service runtime:
+
+```bash
+docker build -t service-titan-job-post-service .
+docker run --env-file .env -p 8080:8080 service-titan-job-post-service
+```
+
+Production startup validates required secrets and Stripe URLs before listening.
+Set `PGSSLMODE=disable` only for trusted local databases. Use
+`PGSSLMODE=no-verify` only when your host requires TLS without certificate
+verification.
+
 ## Test
 
 ```bash

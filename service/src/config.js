@@ -20,6 +20,49 @@ function createConfig(environment = process.env) {
   };
 }
 
+function validateProductionConfig(config, environment = process.env) {
+  const productionLike = environment.NODE_ENV === 'production' || Boolean(environment.DATABASE_URL);
+  if (!productionLike) return [];
+
+  const missing = [];
+  const required = [
+    ['DATABASE_URL', environment.DATABASE_URL],
+    ['SERVICE_ENCRYPTION_KEY', config.encryptionKey],
+    ['WORKER_API_KEY', config.workerApiKey],
+    ['STRIPE_SECRET_KEY', config.stripeSecretKey],
+    ['STRIPE_WEBHOOK_SECRET', config.stripeWebhookSecret],
+    ['STRIPE_MONTHLY_PRICE_ID', config.stripePriceIds.monthly],
+    ['STRIPE_YEARLY_PRICE_ID', config.stripePriceIds.yearly],
+    ['STRIPE_CHECKOUT_SUCCESS_URL', config.stripeCheckoutSuccessUrl],
+    ['STRIPE_CHECKOUT_CANCEL_URL', config.stripeCheckoutCancelUrl],
+    ['STRIPE_PORTAL_RETURN_URL', config.stripePortalReturnUrl]
+  ];
+
+  for (const [name, value] of required) {
+    if (!String(value || '').trim()) missing.push(`${name} is required`);
+  }
+
+  if (config.encryptionKey === 'local-development-key-change-me') {
+    missing.push('SERVICE_ENCRYPTION_KEY must not use the development default');
+  }
+
+  for (const [name, value] of [
+    ['STRIPE_CHECKOUT_SUCCESS_URL', config.stripeCheckoutSuccessUrl],
+    ['STRIPE_CHECKOUT_CANCEL_URL', config.stripeCheckoutCancelUrl],
+    ['STRIPE_PORTAL_RETURN_URL', config.stripePortalReturnUrl]
+  ]) {
+    try {
+      const parsed = new URL(value);
+      if (parsed.protocol !== 'https:') missing.push(`${name} must use HTTPS`);
+    } catch (error) {
+      missing.push(`${name} must be a valid URL`);
+    }
+  }
+
+  return missing;
+}
+
 module.exports = {
-  createConfig
+  createConfig,
+  validateProductionConfig
 };

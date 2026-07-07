@@ -2,7 +2,7 @@
 
 const http = require('http');
 const { createApp } = require('./app');
-const { createConfig } = require('./config');
+const { createConfig, validateProductionConfig } = require('./config');
 const { licenseHash } = require('./crypto');
 const { MemoryStore } = require('./store/memory-store');
 const { PostgresStore } = require('./store/postgres-store');
@@ -55,6 +55,11 @@ function createStore(config) {
 
 function main() {
   const config = createConfig(process.env);
+  const configErrors = validateProductionConfig(config, process.env);
+  if (configErrors.length > 0) {
+    throw new Error(`Hosted service configuration is invalid:\n- ${configErrors.join('\n- ')}`);
+  }
+
   const store = createStore(config);
   const server = http.createServer(createApp({ config, store }));
   server.listen(config.port, () => {
