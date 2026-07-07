@@ -15,6 +15,8 @@ WordPress whether a subscription is valid.
 - Derive entitlement from server-side subscription state.
 - Expose only active/trialing sites to the worker through
   `POST /internal/v1/sync/claims`.
+- Track each site's successful sync cursor in the hosted service so daily runs
+  resume from the last fully processed ServiceTitan modification window.
 - Validate Stripe webhook signatures from the raw request body before updating
   subscription state.
 
@@ -44,6 +46,9 @@ Plugin-facing endpoints:
 Worker-facing endpoint:
 
 - `POST /internal/v1/sync/claims` with `Authorization: Bearer <WORKER_API_KEY>`
+- `POST /internal/v1/sync/runs` with `Authorization: Bearer <WORKER_API_KEY>`
+  records a site's sync result. Successful runs advance the site's cursor;
+  failed runs preserve the previous cursor for a safe retry.
 
 Stripe endpoint:
 
@@ -76,7 +81,7 @@ DEV_SUBSCRIPTION_STATUS=active
 DEV_CURRENT_PERIOD_END=2099-01-01T00:00:00.000Z
 ```
 
-Production should apply `migrations/001_init.sql` to PostgreSQL and set
+Production should apply the SQL files in `migrations/` to PostgreSQL and set
 `DATABASE_URL`. Without `DATABASE_URL`, the server starts the in-memory
 development store only.
 
@@ -104,7 +109,7 @@ verification.
 
 Use `GET /health` for process liveness and `GET /ready` for dependency
 readiness. In production, `/ready` checks PostgreSQL connectivity and confirms
-`001_init.sql` has been recorded by `npm run migrate`.
+the latest migration has been recorded by `npm run migrate`.
 
 ## Test
 

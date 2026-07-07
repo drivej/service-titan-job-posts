@@ -96,6 +96,9 @@ The `service/` package is the subscription, activation, and credential boundary.
 It stores license keys and activation tokens as hashes, encrypts ServiceTitan
 credentials and WordPress delivery signing secrets, validates Stripe webhook
 signatures, and returns only eligible sites to the worker.
+It also owns each site's sync cursor: the first hosted claim uses the configured
+initial backfill date, and later claims resume from the last successful worker
+run with a small overlap for safety.
 
 Checkout creates a Stripe subscription session and returns a one-time license
 key, but that key cannot activate a WordPress site until a signed Stripe webhook
@@ -143,6 +146,8 @@ ST_CLIENT_SECRET=...
 Production ServiceTitan credentials are encrypted in the hosted service. They
 are never fetched from a customer-editable PHP endpoint. WordPress accepts jobs
 only when their exact JSON body is signed with the provisioned per-site secret.
+The hosted service supplies the ServiceTitan modified-date window for each
+eligible site and advances it only after the worker reports a successful run.
 
 Install and run:
 

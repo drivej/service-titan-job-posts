@@ -287,6 +287,8 @@ test('hosted claim sync uses service-issued entitlement, credentials, policy, an
       allowed_cities: 'Newark',
       service_mappings: '201=plumbing'
     },
+    modified_on_or_after: '2026-07-01T00:00:00.000Z',
+    modified_before: '2026-07-07T12:00:00.000Z',
     service_titan: {
       tenant_id: 'tenant-from-service',
       environment: 'integration',
@@ -317,6 +319,8 @@ test('hosted claim sync uses service-issued entitlement, credentials, policy, an
 
   assert.deepEqual(settingsFromClaim(claim), {
     ...claim.policy,
+    modified_on_or_after: '2026-07-01T00:00:00.000Z',
+    modified_before: '2026-07-07T12:00:00.000Z',
     environment: 'integration',
     tenant_id: 'tenant-from-service',
     client_id: 'encrypted-at-rest-client-id',
@@ -328,6 +332,50 @@ test('hosted claim sync uses service-issued entitlement, credentials, policy, an
   assert.equal(JSON.parse(posted[0][1]).source_tenant_id, 'tenant-from-service');
   assert.equal(posted[0][2]['X-ST-Site-ID'], 'site_123');
   assert.match(posted[0][2]['X-ST-Signature'], /^v1=[a-f0-9]{64}$/);
+});
+
+test('hosted claim sync reports successful run windows without requiring HTTP in injected-claim tests', async () => {
+  const claim = {
+    site_id: 'site_reported',
+    delivery_url: 'https://client.example/wp-json/st-sync/v1/jobs',
+    signing_secret: 'site-secret',
+    policy: settings,
+    modified_before: '2026-07-07T12:00:00.000Z',
+    service_titan: {
+      tenant_id: 'tenant-123',
+      environment: 'production',
+      client_id: 'client',
+      client_secret: 'secret'
+    }
+  };
+  const reports = [];
+
+  const result = await syncClaimedSites({
+    claims: [claim],
+    source: {
+      jobs: [job],
+      jobTypes: [jobType],
+      locations: [location]
+    },
+    quiet: true,
+    reportRun(body, reportedClaim) {
+      reports.push([body, reportedClaim.site_id]);
+    },
+    wpClientFactory() {
+      return {
+        async post() {
+          return { data: { created: true } };
+        }
+      };
+    }
+  });
+
+  assert.equal(result.imported, 1);
+  assert.equal(reports.length, 1);
+  assert.equal(reports[0][1], 'site_reported');
+  assert.equal(reports[0][0].status, 'success');
+  assert.equal(reports[0][0].processed_until, claim.modified_before);
+  assert.equal(reports[0][0].stats.imported, 1);
 });
 
 test('hosted claim sync isolates one site failure from other eligible sites', async () => {
@@ -349,11 +397,15 @@ test('hosted claim sync isolates one site failure from other eligible sites', as
     locations: [location]
   };
   const posted = [];
+  const reports = [];
 
   const result = await syncClaimedSites({
     claims: [{ site_id: 'site_bad' }, goodClaim],
     source,
     quiet: true,
+    reportRun(body) {
+      reports.push(body);
+    },
     wpClientFactory(claim) {
       if (claim.site_id === 'site_bad') {
         throw new Error('bad site transport');
@@ -371,4 +423,5 @@ test('hosted claim sync isolates one site failure from other eligible sites', as
   assert.equal(result.imported, 1);
   assert.equal(result.failed, 1);
   assert.equal(posted.length, 1);
+  assert.deepEqual(reports.map((report) => report.status), ['failed', 'success']);
 });

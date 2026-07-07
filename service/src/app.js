@@ -17,6 +17,7 @@ const POLICY_KEYS = new Set([
   'allowed_cities',
   'excluded_job_types'
 ]);
+const SYNC_RUN_STATUSES = new Set(['success', 'failed']);
 
 function jsonResponse(response, status, payload) {
   const body = JSON.stringify(payload);
@@ -174,6 +175,39 @@ function sanitizeConnection(input) {
     client_id: clientId,
     client_secret: clientSecret,
     environment
+  };
+}
+
+function sanitizeSyncStats(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return JSON.parse(JSON.stringify(value));
+}
+
+function sanitizeSyncRun(input) {
+  const siteId = String(input.site_id || '').trim();
+  const status = String(input.status || '').trim().toLowerCase();
+  if (!siteId || !SYNC_RUN_STATUSES.has(status)) {
+    throw serviceError(400, 'invalid_sync_run', 'site_id and status of success or failed are required.');
+  }
+
+  let processedUntil = null;
+  if (input.processed_until) {
+    const parsed = new Date(String(input.processed_until));
+    if (!Number.isFinite(parsed.getTime())) {
+      throw serviceError(400, 'invalid_sync_run', 'processed_until must be a valid date.');
+    }
+    processedUntil = parsed;
+  }
+  if (status === 'success' && !processedUntil) {
+    throw serviceError(400, 'invalid_sync_run', 'processed_until is required for successful sync runs.');
+  }
+
+  return {
+    site_id: siteId,
+    status,
+    processed_until: processedUntil,
+    stats: sanitizeSyncStats(input.stats),
+    error: String(input.error || '').trim().slice(0, 2000)
   };
 }
 
@@ -396,6 +430,18 @@ async function handleRoute(request, rawBody, body, dependencies) {
     };
   }
 
+  if (request.method === 'POST' && url.pathname === '/internal/v1/sync/runs') {
+    requireWorker(request, config);
+    const run = await store.recordSyncRun(sanitizeSyncRun(body), context);
+    return {
+      status: 200,
+      payload: {
+        updated: true,
+        ...run
+      }
+    };
+  }
+
   if (request.method === 'POST' && url.pathname === '/v1/stripe/webhooks') {
     verifyStripeSignature(rawBody, request.headers['stripe-signature'], config.stripeWebhookSecret, {
       now: Math.floor(context.now.getTime() / 1000)
@@ -462,5 +508,6 @@ module.exports = {
   planPriceId,
   sanitizeConnection,
   sanitizeEmail,
-  sanitizePolicy
+  sanitizePolicy,
+  sanitizeSyncRun
 };

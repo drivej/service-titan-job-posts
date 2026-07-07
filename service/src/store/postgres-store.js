@@ -3,6 +3,9 @@
 const { decryptText, encryptText, licenseHash, randomSecret, sha256Hex } = require('../crypto');
 const { buildEntitlement } = require('../entitlements');
 const { serviceError } = require('../errors');
+const { syncWindowForSite } = require('./sync-window');
+
+const LATEST_MIGRATION = '002_sync_state.sql';
 
 function row(result) {
   return result.rows && result.rows.length > 0 ? result.rows[0] : null;
@@ -153,7 +156,8 @@ class PostgresStore {
   async healthCheck() {
     await this.db.query('SELECT 1');
     const migration = row(await this.db.query(
-      "SELECT filename FROM service_migrations WHERE filename = '001_init.sql' LIMIT 1"
+      'SELECT filename FROM service_migrations WHERE filename = $1 LIMIT 1',
+      [LATEST_MIGRATION]
     ));
 
     return {
@@ -343,11 +347,14 @@ class PostgresStore {
         current_period_end: record.current_period_end
       }, context.priceMap, context.now);
       if (!entitlement.eligible) continue;
+      const window = syncWindowForSite(record, context);
 
       claims.push({
         site_id: record.id,
         site_url: record.site_url,
         delivery_url: record.delivery_url,
+        modified_on_or_after: window.modified_on_or_after,
+        modified_before: window.modified_before,
         entitlement,
         policy: record.policy || {},
         signing_secret: decryptText(record.signing_secret_encrypted, context.encryptionKey),
@@ -361,6 +368,46 @@ class PostgresStore {
     }
 
     return claims;
+  }
+
+  async recordSyncRun(input, context) {
+    const now = context.now || new Date();
+    const stats = input.stats && typeof input.stats === 'object' ? input.stats : {};
+    const site = row(await this.db.query(
+      `UPDATE sites
+          SET last_sync_attempt_at = $2,
+              last_sync_status = $3,
+              last_sync_error = $4,
+              last_sync_stats = $5::jsonb,
+              last_successful_sync_at = CASE
+                WHEN $3 = 'success' THEN $6::timestamptz
+                ELSE last_successful_sync_at
+              END,
+              updated_at = $2
+        WHERE id = $1 AND revoked_at IS NULL
+        RETURNING id, last_successful_sync_at, last_sync_attempt_at,
+                  last_sync_status, last_sync_error, last_sync_stats`,
+      [
+        input.site_id,
+        now,
+        input.status,
+        input.status === 'failed' ? String(input.error || '').slice(0, 2000) : '',
+        JSON.stringify(stats),
+        input.status === 'success' ? input.processed_until : null
+      ]
+    ));
+    if (!site) {
+      throw serviceError(404, 'site_not_found', 'Site was not found.');
+    }
+
+    return {
+      site_id: site.id,
+      last_successful_sync_at: site.last_successful_sync_at,
+      last_sync_attempt_at: site.last_sync_attempt_at,
+      last_sync_status: site.last_sync_status,
+      last_sync_error: site.last_sync_error,
+      last_sync_stats: site.last_sync_stats || {}
+    };
   }
 
   async recordWebhookEvent(eventId, eventType = 'unknown') {

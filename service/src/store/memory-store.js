@@ -3,6 +3,7 @@
 const { decryptText, encryptText, licenseHash, randomSecret, sha256Hex } = require('../crypto');
 const { buildEntitlement } = require('../entitlements');
 const { serviceError } = require('../errors');
+const { syncWindowForSite } = require('./sync-window');
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -89,6 +90,11 @@ class MemoryStore {
       policy: Object.keys(input.policy || {}).length > 0
         ? { ...input.policy }
         : (site && site.policy ? site.policy : {}),
+      last_successful_sync_at: site && site.last_successful_sync_at ? site.last_successful_sync_at : null,
+      last_sync_attempt_at: site && site.last_sync_attempt_at ? site.last_sync_attempt_at : null,
+      last_sync_status: site && site.last_sync_status ? site.last_sync_status : null,
+      last_sync_error: site && site.last_sync_error ? site.last_sync_error : '',
+      last_sync_stats: site && site.last_sync_stats ? clone(site.last_sync_stats) : {},
       created_at: site && site.created_at ? site.created_at : nowIso(now),
       updated_at: nowIso(now),
       revoked_at: null
@@ -238,11 +244,14 @@ class MemoryStore {
 
       const connection = this.connections.get(site.id);
       if (!connection) continue;
+      const window = syncWindowForSite(site, context);
 
       claims.push({
         site_id: site.id,
         site_url: site.site_url,
         delivery_url: site.delivery_url,
+        modified_on_or_after: window.modified_on_or_after,
+        modified_before: window.modified_before,
         entitlement,
         policy: clone(site.policy || {}),
         signing_secret: decryptText(site.signing_secret_encrypted, context.encryptionKey),
@@ -255,6 +264,32 @@ class MemoryStore {
       });
     }
     return claims;
+  }
+
+  async recordSyncRun(input, context) {
+    const site = this.sites.get(input.site_id);
+    if (!site || site.revoked_at) {
+      throw serviceError(404, 'site_not_found', 'Site was not found.');
+    }
+
+    const now = context.now || new Date();
+    site.last_sync_attempt_at = nowIso(now);
+    site.last_sync_status = input.status;
+    site.last_sync_error = input.status === 'failed' ? String(input.error || '').slice(0, 2000) : '';
+    site.last_sync_stats = clone(input.stats || {});
+    if (input.status === 'success') {
+      site.last_successful_sync_at = nowIso(input.processed_until);
+    }
+    site.updated_at = nowIso(now);
+
+    return clone({
+      site_id: site.id,
+      last_successful_sync_at: site.last_successful_sync_at || null,
+      last_sync_attempt_at: site.last_sync_attempt_at,
+      last_sync_status: site.last_sync_status,
+      last_sync_error: site.last_sync_error,
+      last_sync_stats: site.last_sync_stats
+    });
   }
 
   async recordWebhookEvent(eventId) {

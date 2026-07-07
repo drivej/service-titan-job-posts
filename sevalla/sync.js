@@ -367,7 +367,7 @@ async function fetchServiceTitanData(settings, appKey) {
   const jobs = await fetchPaginated(client, `/jpm/v2/tenant/${tenant}/jobs`, {
     jobStatus: 'Completed',
     modifiedOnOrAfter: normalizeSinceDate(settings.modified_on_or_after || settings.jobs_since),
-    modifiedBefore: new Date().toISOString(),
+    modifiedBefore: normalizeSinceDate(settings.modified_before) || new Date().toISOString(),
     sort: '+ModifiedOn',
     pageSize: DEFAULT_PAGE_SIZE
   });
@@ -505,11 +505,53 @@ function settingsFromClaim(claim) {
   const serviceTitan = claim.service_titan || {};
   return {
     ...(claim.policy || {}),
+    modified_on_or_after: claim.modified_on_or_after || '',
+    modified_before: claim.modified_before || '',
     environment: serviceTitan.environment || 'production',
     tenant_id: serviceTitan.tenant_id || '',
     client_id: serviceTitan.client_id || '',
     client_secret: serviceTitan.client_secret || ''
   };
+}
+
+async function reportSyncRun(config = {}, claim = {}, result = {}, status = 'success', error = null) {
+  const body = {
+    site_id: claim.site_id,
+    status,
+    processed_until: claim.modified_before || new Date().toISOString(),
+    stats: result,
+    error: error ? formatError(error) : ''
+  };
+
+  if (typeof config.reportRun === 'function') {
+    return config.reportRun(body, claim);
+  }
+
+  const workerApiKey = String(config.workerApiKey || '');
+  if (!config.serviceUrl || !workerApiKey) return null;
+
+  const serviceUrl = normalizeHostedServiceUrl(config.serviceUrl, config);
+  if (!serviceUrl || !workerApiKey) return null;
+
+  return requestWithRetry(() => axios.post(`${serviceUrl}/internal/v1/sync/runs`, body, {
+    timeout: DEFAULT_TIMEOUT_MS,
+    headers: {
+      Authorization: `Bearer ${workerApiKey}`,
+      'Content-Type': 'application/json'
+    }
+  }));
+}
+
+async function safeReportSyncRun(config, claim, result, status, error = null) {
+  try {
+    await reportSyncRun(config, claim, result, status, error);
+    return true;
+  } catch (reportError) {
+    if (!config.quiet) {
+      console.error(`Failed to report site ${claim.site_id || 'unknown'} sync run: ${formatError(reportError)}`);
+    }
+    return false;
+  }
 }
 
 async function syncJobs(config = {}) {
@@ -594,8 +636,20 @@ async function syncClaimedSites(config = {}) {
       for (const [reason, count] of Object.entries(result.reasons)) {
         totals.reasons[reason] = (totals.reasons[reason] || 0) + count;
       }
+      const status = result.failed > 0 ? 'failed' : 'success';
+      const error = result.failed > 0 ? new Error(`${result.failed} job delivery failure(s)`) : null;
+      const reported = await safeReportSyncRun(config, claim, result, status, error);
+      if (!reported && status === 'success') {
+        totals.failed += 1;
+      }
     } catch (error) {
       totals.failed += 1;
+      await safeReportSyncRun(config, claim, {
+        imported: 0,
+        filtered: 0,
+        failed: 1,
+        reasons: {}
+      }, 'failed', error);
       if (!config.quiet) {
         console.error(`Failed site ${claim.site_id || 'unknown'}: ${formatError(error)}`);
       }
@@ -667,6 +721,8 @@ module.exports = {
   redactSensitiveDetails,
   requestWithRetry,
   resolveService,
+  reportSyncRun,
+  safeReportSyncRun,
   shouldImportJob,
   signDelivery,
   slugify,
