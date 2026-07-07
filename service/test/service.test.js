@@ -130,6 +130,32 @@ test('activates an eligible subscription and returns only activation-time secret
   });
 });
 
+test('health and readiness endpoints distinguish process liveness from dependency readiness', async () => {
+  const store = new MemoryStore(createSeed());
+  await withService(store, async ({ request }) => {
+    const health = await request('/health');
+    assert.equal(health.response.status, 200);
+    assert.equal(health.json.ok, true);
+
+    const ready = await request('/ready');
+    assert.equal(ready.response.status, 200);
+    assert.equal(ready.json.ok, true);
+    assert.equal(ready.json.store, 'memory');
+  });
+
+  const failingStore = {
+    async healthCheck() {
+      throw new Error('database unavailable');
+    }
+  };
+  await withService(failingStore, async ({ request }) => {
+    const ready = await request('/ready');
+    assert.equal(ready.response.status, 503);
+    assert.equal(ready.json.ok, false);
+    assert.equal(ready.json.error, 'database unavailable');
+  });
+});
+
 test('activation rejects cross-origin or non-plugin delivery URLs', async () => {
   const store = new MemoryStore(createSeed());
   await withService(store, async ({ request }) => {

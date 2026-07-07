@@ -192,6 +192,30 @@ async function handleRoute(request, rawBody, body, dependencies) {
     return { status: 200, payload: { ok: true } };
   }
 
+  if (request.method === 'GET' && url.pathname === '/ready') {
+    try {
+      const readiness = typeof store.healthCheck === 'function'
+        ? await store.healthCheck(context)
+        : { ok: true, store: 'unknown' };
+
+      return {
+        status: readiness.ok === false ? 503 : 200,
+        payload: {
+          ok: readiness.ok !== false,
+          ...readiness
+        }
+      };
+    } catch (error) {
+      return {
+        status: 503,
+        payload: {
+          ok: false,
+          error: error.message || 'Readiness check failed.'
+        }
+      };
+    }
+  }
+
   if (request.method === 'POST' && url.pathname === '/v1/billing/checkout') {
     const email = sanitizeEmail(body.email);
     const { plan, priceId } = planPriceId(body.plan, config);

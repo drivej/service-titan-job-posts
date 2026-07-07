@@ -104,6 +104,13 @@ class MemoryStore {
     };
   }
 
+  async healthCheck() {
+    return {
+      ok: true,
+      store: 'memory'
+    };
+  }
+
   async createBillingAccount(input, context) {
     const now = context.now || new Date();
     const email = String(input.email || '').toLowerCase();

@@ -150,6 +150,19 @@ class PostgresStore {
     });
   }
 
+  async healthCheck() {
+    await this.db.query('SELECT 1');
+    const migration = row(await this.db.query(
+      "SELECT filename FROM service_migrations WHERE filename = '001_init.sql' LIMIT 1"
+    ));
+
+    return {
+      ok: Boolean(migration),
+      store: 'postgres',
+      migrations: migration ? 'applied' : 'missing'
+    };
+  }
+
   async createBillingAccount(input, context) {
     return this.withTransaction(async (client) => {
       const email = String(input.email || '').toLowerCase();

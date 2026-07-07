@@ -102,6 +102,10 @@ Set `PGSSLMODE=disable` only for trusted local databases. Use
 `PGSSLMODE=no-verify` only when your host requires TLS without certificate
 verification.
 
+Use `GET /health` for process liveness and `GET /ready` for dependency
+readiness. In production, `/ready` checks PostgreSQL connectivity and confirms
+`001_init.sql` has been recorded by `npm run migrate`.
+
 ## Test
 
 ```bash
