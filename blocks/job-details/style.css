@@ -1,0 +1,25 @@
+.st-job-details {
+  padding: clamp(1.25rem, 3vw, 2rem);
+  border: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+  border-radius: 0.75rem;
+}
+
+.st-job-details__eyebrow {
+  margin: 0 0 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.st-job-details__summary {
+  margin: 0;
+  font-size: 1.125rem;
+  line-height: 1.65;
+}
+
+.st-job-details__date {
+  margin: 1rem 0 0;
+  font-size: 0.875rem;
+  opacity: 0.72;
+}

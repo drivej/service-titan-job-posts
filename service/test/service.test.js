@@ -1,0 +1,466 @@
+'use strict';
+
+const assert = require('node:assert/strict');
+const test = require('node:test');
+
+const { handleRoute } = require('../src/app');
+const { licenseHash } = require('../src/crypto');
+const { ServiceError } = require('../src/errors');
+const { MemoryStore } = require('../src/store/memory-store');
+const { stripeSignatureHeader } = require('../src/stripe');
+
+const FIXED_NOW = new Date('2026-07-07T12:00:00.000Z');
+
+function createSeed(status = 'active') {
+  return {
+    accounts: [{
+      id: 'acct_1',
+      email: 'owner@example.test',
+      stripe_customer_id: 'cus_123'
+    }],
+    licenses: [{
+      id: 'lic_1',
+      account_id: 'acct_1',
+      key_hash: licenseHash('LOCAL-TEST-LICENSE'),
+      site_limit: 1,
+      active: true
+    }],
+    subscriptions: [{
+      account_id: 'acct_1',
+      stripe_subscription_id: 'sub_123',
+      stripe_customer_id: 'cus_123',
+      status,
+      price_id: 'price_monthly',
+      current_period_end: '2026-08-01T00:00:00.000Z'
+    }]
+  };
+}
+
+async function withService(store, callback, harnessOptions = {}) {
+  const config = {
+    encryptionKey: 'test-encryption-key',
+    workerApiKey: 'worker-secret',
+    stripeWebhookSecret: 'whsec_test',
+    stripeSecretKey: 'sk_test',
+    stripeCheckoutSuccessUrl: 'https://billing.example/success',
+    stripeCheckoutCancelUrl: 'https://billing.example/cancel',
+    stripePortalReturnUrl: 'https://billing.example/account',
+    stripePriceIds: {
+      monthly: 'price_monthly',
+      yearly: 'price_yearly'
+    },
+    siteLimitDefault: 1,
+    ...(harnessOptions.config || {})
+  };
+  const request = async (path, requestOptions = {}) => {
+    const headers = {};
+    for (const [key, value] of Object.entries(requestOptions.headers || {})) {
+      headers[key.toLowerCase()] = value;
+    }
+
+    let rawBody = '';
+    let body = {};
+    if (requestOptions.body && typeof requestOptions.body === 'string') {
+      rawBody = requestOptions.body;
+      body = JSON.parse(rawBody);
+    } else if (requestOptions.body) {
+      rawBody = JSON.stringify(requestOptions.body);
+      body = requestOptions.body;
+      headers['content-type'] = 'application/json';
+    }
+
+    try {
+      const result = await handleRoute(
+        { method: requestOptions.method || 'GET', url: path, headers },
+        rawBody,
+        body,
+        { config, store, stripeClient: harnessOptions.stripeClient, now: () => FIXED_NOW }
+      );
+      return { response: { status: result.status }, json: result.payload };
+    } catch (error) {
+      if (error instanceof ServiceError) {
+        return {
+          response: { status: error.status },
+          json: { error: error.message, code: error.code }
+        };
+      }
+      throw error;
+    }
+  };
+
+  await callback({ request, config });
+}
+
+async function activate(request) {
+  const { response, json } = await request('/v1/licenses/activate', {
+    method: 'POST',
+    body: {
+      license_key: 'LOCAL-TEST-LICENSE',
+      site_url: 'https://Example.com/some/path?x=1',
+      installation_id: 'wp-install-1',
+      delivery_url: 'https://example.com/wp-json/st-sync/v1/jobs',
+      plugin_version: '2.0.0',
+      policy: {
+        min_price: '250',
+        min_summary_words: '5',
+        ignored: 'nope'
+      }
+    }
+  });
+  assert.equal(response.status, 201);
+  assert.equal(json.entitlement.eligible, true);
+  assert.equal(json.entitlement.plan, 'monthly');
+  return json;
+}
+
+test('activates an eligible subscription and returns only activation-time secrets', async () => {
+  const store = new MemoryStore(createSeed());
+  await withService(store, async ({ request }) => {
+    const activation = await activate(request);
+    assert.match(activation.site_id, /^site_/);
+    assert.match(activation.activation_token, /^act_/);
+    assert.match(activation.signing_secret, /^sig_/);
+
+    const persisted = store.dump();
+    assert.equal(JSON.stringify(persisted).includes('LOCAL-TEST-LICENSE'), false);
+    assert.equal(JSON.stringify(persisted).includes(activation.activation_token), false);
+    assert.equal(JSON.stringify(persisted).includes(activation.signing_secret), false);
+    assert.equal(persisted.sites[0].policy.min_price, '250');
+    assert.equal(persisted.sites[0].policy.ignored, undefined);
+  });
+});
+
+test('activation rejects cross-origin or non-plugin delivery URLs', async () => {
+  const store = new MemoryStore(createSeed());
+  await withService(store, async ({ request }) => {
+    const crossOrigin = await request('/v1/licenses/activate', {
+      method: 'POST',
+      body: {
+        license_key: 'LOCAL-TEST-LICENSE',
+        site_url: 'https://example.com',
+        installation_id: 'wp-install-1',
+        delivery_url: 'https://attacker.example/wp-json/st-sync/v1/jobs'
+      }
+    });
+    assert.equal(crossOrigin.response.status, 400);
+    assert.equal(crossOrigin.json.code, 'invalid_delivery_url');
+
+    const wrongPath = await request('/v1/licenses/activate', {
+      method: 'POST',
+      body: {
+        license_key: 'LOCAL-TEST-LICENSE',
+        site_url: 'https://example.com',
+        installation_id: 'wp-install-1',
+        delivery_url: 'https://example.com/wp-json/wp/v2/posts'
+      }
+    });
+    assert.equal(wrongPath.response.status, 400);
+    assert.equal(wrongPath.json.code, 'invalid_delivery_url');
+  });
+});
+
+test('checkout creates a license but activation stays blocked until Stripe marks the subscription active', async () => {
+  const store = new MemoryStore();
+  const stripeCalls = [];
+  const stripeClient = {
+    async createCustomer(values) {
+      stripeCalls.push(['customer', values]);
+      return { id: 'cus_checkout' };
+    },
+    async createCheckoutSession(values) {
+      stripeCalls.push(['checkout', values]);
+      return { id: 'cs_123', url: 'https://checkout.stripe.test/cs_123' };
+    }
+  };
+
+  await withService(store, async ({ request, config }) => {
+    const checkout = await request('/v1/billing/checkout', {
+      method: 'POST',
+      body: {
+        email: 'Owner@Example.com',
+        plan: 'yearly',
+        success_url: 'https://attacker.example/success'
+      }
+    });
+
+    assert.equal(checkout.response.status, 201);
+    assert.match(checkout.json.license_key, /^LIC_/);
+    assert.equal(checkout.json.checkout_url, 'https://checkout.stripe.test/cs_123');
+    assert.equal(stripeCalls[0][1].email, 'owner@example.com');
+    assert.equal(stripeCalls[1][1].mode, 'subscription');
+    assert.equal(stripeCalls[1][1].line_items[0].price, 'price_yearly');
+    assert.equal(stripeCalls[1][1].success_url, config.stripeCheckoutSuccessUrl);
+    assert.notEqual(stripeCalls[1][1].success_url, 'https://attacker.example/success');
+
+    const persistedBeforeWebhook = JSON.stringify(store.dump());
+    assert.equal(persistedBeforeWebhook.includes(checkout.json.license_key), false);
+
+    const blockedActivation = await request('/v1/licenses/activate', {
+      method: 'POST',
+      body: {
+        license_key: checkout.json.license_key,
+        site_url: 'https://example.com',
+        installation_id: 'wp-install-1',
+        delivery_url: 'https://example.com/wp-json/st-sync/v1/jobs'
+      }
+    });
+    assert.equal(blockedActivation.response.status, 402);
+
+    const accountId = store.dump().accounts[0].id;
+    const event = {
+      id: 'evt_checkout_active',
+      type: 'customer.subscription.updated',
+      data: {
+        object: {
+          id: 'sub_checkout',
+          object: 'subscription',
+          customer: 'cus_checkout',
+          status: 'active',
+          current_period_end: 1814400000,
+          metadata: { account_id: accountId },
+          items: {
+            data: [{
+              price: { id: 'price_yearly' },
+              current_period_end: 1814400000
+            }]
+          }
+        }
+      }
+    };
+    const raw = JSON.stringify(event);
+    const webhook = await request('/v1/stripe/webhooks', {
+      method: 'POST',
+      headers: {
+        'Stripe-Signature': stripeSignatureHeader(raw, config.stripeWebhookSecret, Math.floor(FIXED_NOW.getTime() / 1000))
+      },
+      body: raw
+    });
+    assert.equal(webhook.response.status, 200);
+
+    const activated = await request('/v1/licenses/activate', {
+      method: 'POST',
+      body: {
+        license_key: checkout.json.license_key,
+        site_url: 'https://example.com',
+        installation_id: 'wp-install-1',
+        delivery_url: 'https://example.com/wp-json/st-sync/v1/jobs'
+      }
+    });
+    assert.equal(activated.response.status, 201);
+    assert.equal(activated.json.entitlement.eligible, true);
+    assert.equal(activated.json.entitlement.plan, 'yearly');
+  }, { stripeClient });
+});
+
+test('billing portal requires license or activation auth and uses server-configured return URL', async () => {
+  const store = new MemoryStore(createSeed());
+  const stripeCalls = [];
+  const stripeClient = {
+    async createPortalSession(values) {
+      stripeCalls.push(values);
+      return { url: 'https://billing.stripe.test/session' };
+    }
+  };
+
+  await withService(store, async ({ request, config }) => {
+    const missingAuth = await request('/v1/billing/portal', {
+      method: 'POST',
+      body: {}
+    });
+    assert.equal(missingAuth.response.status, 401);
+
+    const portal = await request('/v1/billing/portal', {
+      method: 'POST',
+      body: {
+        license_key: 'LOCAL-TEST-LICENSE',
+        return_url: 'https://attacker.example/return'
+      }
+    });
+    assert.equal(portal.response.status, 200);
+    assert.equal(portal.json.portal_url, 'https://billing.stripe.test/session');
+    assert.equal(stripeCalls[0].customer, 'cus_123');
+    assert.equal(stripeCalls[0].return_url, config.stripePortalReturnUrl);
+  }, { stripeClient });
+});
+
+test('rejects activation when the server-side subscription is not eligible', async () => {
+  const store = new MemoryStore(createSeed('past_due'));
+  await withService(store, async ({ request }) => {
+    const { response, json } = await request('/v1/licenses/activate', {
+      method: 'POST',
+      body: {
+        license_key: 'LOCAL-TEST-LICENSE',
+        site_url: 'https://example.com',
+        installation_id: 'wp-install-1',
+        delivery_url: 'https://example.com/wp-json/st-sync/v1/jobs'
+      }
+    });
+
+    assert.equal(response.status, 402);
+    assert.equal(json.code, 'subscription_required');
+  });
+});
+
+test('stores ServiceTitan credentials encrypted and returns claims only to the worker', async () => {
+  const store = new MemoryStore(createSeed());
+  await withService(store, async ({ request }) => {
+    const activation = await activate(request);
+    const auth = { Authorization: `Bearer ${activation.activation_token}` };
+
+    const status = await request('/v1/licenses/status', { headers: auth });
+    assert.equal(status.response.status, 200);
+    assert.equal(status.json.site_url, 'https://example.com');
+
+    const connection = await request('/v1/connections/servicetitan', {
+      method: 'PUT',
+      headers: auth,
+      body: {
+        tenant_id: '123456',
+        client_id: 'st_client',
+        client_secret: 'st_secret',
+        environment: 'integration'
+      }
+    });
+    assert.equal(connection.response.status, 200);
+
+    const policy = await request('/v1/sites/policy', {
+      method: 'PUT',
+      headers: auth,
+      body: {
+        min_price: '500',
+        service_mappings: '123=plumbing',
+        ignored: 'not persisted'
+      }
+    });
+    assert.equal(policy.response.status, 200);
+    assert.equal(policy.json.policy.ignored, undefined);
+
+    const persisted = store.dump();
+    assert.equal(JSON.stringify(persisted).includes('st_secret'), false);
+
+    const unauthorized = await request('/internal/v1/sync/claims', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer wrong' },
+      body: {}
+    });
+    assert.equal(unauthorized.response.status, 401);
+
+    const claims = await request('/internal/v1/sync/claims', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer worker-secret' },
+      body: {}
+    });
+    assert.equal(claims.response.status, 200);
+    assert.equal(claims.json.sites.length, 1);
+    assert.equal(claims.json.sites[0].service_titan.client_secret, 'st_secret');
+    assert.equal(claims.json.sites[0].policy.min_price, '500');
+    assert.equal(claims.json.sites[0].signing_secret, activation.signing_secret);
+  });
+});
+
+test('revoked activations preserve old content boundary by removing only future sync claims', async () => {
+  const store = new MemoryStore(createSeed());
+  await withService(store, async ({ request }) => {
+    const activation = await activate(request);
+    const auth = { Authorization: `Bearer ${activation.activation_token}` };
+    await request('/v1/connections/servicetitan', {
+      method: 'PUT',
+      headers: auth,
+      body: {
+        tenant_id: '123456',
+        client_id: 'st_client',
+        client_secret: 'st_secret',
+        environment: 'production'
+      }
+    });
+
+    const deleted = await request('/v1/licenses/activation', {
+      method: 'DELETE',
+      headers: auth
+    });
+    assert.equal(deleted.response.status, 200);
+
+    const claims = await request('/internal/v1/sync/claims', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer worker-secret' },
+      body: {}
+    });
+    assert.equal(claims.response.status, 200);
+    assert.deepEqual(claims.json.sites, []);
+  });
+});
+
+test('Stripe webhook signature verification is required and webhook events are idempotent', async () => {
+  const store = new MemoryStore(createSeed());
+  await withService(store, async ({ request, config }) => {
+    const activation = await activate(request);
+    const auth = { Authorization: `Bearer ${activation.activation_token}` };
+    await request('/v1/connections/servicetitan', {
+      method: 'PUT',
+      headers: auth,
+      body: {
+        tenant_id: '123456',
+        client_id: 'st_client',
+        client_secret: 'st_secret',
+        environment: 'production'
+      }
+    });
+
+    const event = {
+      id: 'evt_1',
+      type: 'customer.subscription.deleted',
+      data: {
+        object: {
+          id: 'sub_123',
+          object: 'subscription',
+          customer: 'cus_123',
+          status: 'canceled',
+          current_period_end: 1782864000,
+          metadata: { account_id: 'acct_1' },
+          items: {
+            data: [{
+              price: { id: 'price_monthly' },
+              current_period_end: 1782864000
+            }]
+          }
+        }
+      }
+    };
+    const raw = JSON.stringify(event);
+
+    const rejected = await request('/v1/stripe/webhooks', {
+      method: 'POST',
+      headers: { 'Stripe-Signature': 't=1,v1=bad' },
+      body: raw
+    });
+    assert.equal(rejected.response.status, 400);
+
+    const accepted = await request('/v1/stripe/webhooks', {
+      method: 'POST',
+      headers: {
+        'Stripe-Signature': stripeSignatureHeader(raw, config.stripeWebhookSecret, Math.floor(FIXED_NOW.getTime() / 1000))
+      },
+      body: raw
+    });
+    assert.equal(accepted.response.status, 200);
+    assert.equal(accepted.json.received, true);
+
+    const duplicate = await request('/v1/stripe/webhooks', {
+      method: 'POST',
+      headers: {
+        'Stripe-Signature': stripeSignatureHeader(raw, config.stripeWebhookSecret, Math.floor(FIXED_NOW.getTime() / 1000))
+      },
+      body: raw
+    });
+    assert.equal(duplicate.response.status, 200);
+    assert.equal(duplicate.json.duplicate, true);
+
+    const claims = await request('/internal/v1/sync/claims', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer worker-secret' },
+      body: {}
+    });
+    assert.equal(claims.response.status, 200);
+    assert.deepEqual(claims.json.sites, []);
+  });
+});

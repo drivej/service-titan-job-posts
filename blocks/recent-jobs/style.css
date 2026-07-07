@@ -1,0 +1,40 @@
+.st-recent-jobs__heading {
+  margin-bottom: 1.25rem;
+}
+
+.st-recent-jobs__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+  gap: 1rem;
+}
+
+.st-recent-jobs__card {
+  display: flex;
+  flex-direction: column;
+  padding: 1.25rem;
+  border: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+  border-radius: 0.75rem;
+}
+
+.st-recent-jobs__title {
+  margin: 0 0 0.75rem;
+  font-size: 1.125rem;
+  line-height: 1.35;
+}
+
+.st-recent-jobs__summary {
+  margin: 0;
+  line-height: 1.6;
+}
+
+.st-recent-jobs__date {
+  margin: auto 0 0;
+  padding-top: 1rem;
+  font-size: 0.875rem;
+  opacity: 0.72;
+}
+
+.st-recent-jobs__notice {
+  padding: 1rem;
+  border: 1px dashed currentColor;
+}

@@ -1,60 +1,42 @@
 <?php
 /**
- * Plugin Name:       Service Titan Job Post
- * Plugin URI:        https://example.com/service-titan-job-post
- * Description:       A brief description of what this amazing plugin does.
- * Version:           1.0.0
- * Author:            Your Name
- * Author URI:        https://example.com
+ * Plugin Name:       ServiceTitan Local Job Content
+ * Plugin URI:        https://github.com/drivej/service-titan-job-posts
+ * Description:       Imports completed ServiceTitan jobs as reviewable, location-specific content.
+ * Version:           2.0.0
+ * Author:            Drive
  * License:           GPLv2 or later
  * Text Domain:       service-titan-job-post
+ * Requires at least: 6.4
+ * Requires PHP:      7.4
  */
 
-// Exit if accessed directly to protect against malicious execution
 if (! defined('ABSPATH')) {
     exit;
 }
 
-require_once plugin_dir_path(__FILE__) . 'includes/class-activator.php';
+define('ST_SYNC_VERSION', '2.0.0');
+define('ST_SYNC_PLUGIN_FILE', __FILE__);
+define('ST_SYNC_PLUGIN_DIR', plugin_dir_path(__FILE__));
 
-// Custom post types must be registered on every request so their REST routes exist.
-add_action('init', ['ST_Sync_Activator', 'register_st_jobs']);
+require_once ST_SYNC_PLUGIN_DIR . 'includes/class-activator.php';
+require_once ST_SYNC_PLUGIN_DIR . 'includes/class-deactivator.php';
+require_once ST_SYNC_PLUGIN_DIR . 'includes/class-permalinks.php';
+require_once ST_SYNC_PLUGIN_DIR . 'includes/class-sync-blocks.php';
+require_once ST_SYNC_PLUGIN_DIR . 'includes/class-sevalla-api.php';
+require_once ST_SYNC_PLUGIN_DIR . 'includes/class-service-client.php';
+require_once ST_SYNC_PLUGIN_DIR . 'admin/class-st-sync-admin.php';
 
-/**
- * The code that runs during plugin activation.
- * This action is documented in includes/class-activator.php
- */
-function activate_st_sync()
-{
-    ST_Sync_Activator::activate();
+add_action('init', ['ST_Sync_Activator', 'register_content_model']);
+add_action('init', ['ST_Sync_Activator', 'maybe_upgrade'], 99);
+
+register_activation_hook(__FILE__, ['ST_Sync_Activator', 'activate']);
+register_deactivation_hook(__FILE__, ['ST_Sync_Deactivator', 'deactivate']);
+
+if (is_admin()) {
+    new ST_Sync_Admin();
 }
-/**
- * The code that runs during plugin deactivation.
- */
-function deactivate_st_sync()
-{
-    require_once plugin_dir_path(__FILE__) . 'includes/class-deactivator.php';
-    ST_Sync_Deactivator::deactivate();
-}
-register_activation_hook(__FILE__, 'activate_st_sync');
-register_deactivation_hook(__FILE__, 'deactivate_st_sync');
 
-/**
- * Load and Initialize the Admin Settings Page
- */
-$st_admin_path = plugin_dir_path( __FILE__ ) . 'admin/class-st-sync-admin.php';
-
-if ( file_exists( $st_admin_path ) ) {
-    require_once $st_admin_path;
-    
-    // Ensure the class name matches what you wrote in the admin file
-    if ( class_exists( 'ST_Sync_Admin' ) ) {
-        new ST_Sync_Admin();
-    }
-}
-/**
- * Load and Initialize the Gutenberg Blocks
- */
-require_once plugin_dir_path( __FILE__ ) . 'includes/class-sync-blocks.php';
-
-require_once plugin_dir_path( __FILE__ ) . 'includes/class-sevalla-api.php';
+new ST_Sync_Permalinks();
+new ST_Sync_Blocks();
+new ST_Sync_Sevalla_API();

@@ -1,29 +1,56 @@
 {
-  "total": 3,
-  "data": [
+  "jobs": {
+    "page": 1,
+    "pageSize": 3,
+    "hasMore": false,
+    "data": [
+      {
+        "id": 1001,
+        "jobNumber": "JOB-123",
+        "locationId": 501,
+        "jobTypeId": 201,
+        "jobStatus": "Completed",
+        "completedOn": "2026-07-02T14:30:00Z",
+        "total": 750,
+        "summaryOfWork": "Cleared a sewage backup and removed the clog with a hydro-jet."
+      },
+      {
+        "id": 1002,
+        "jobNumber": "JOB-124",
+        "locationId": 502,
+        "jobTypeId": 202,
+        "jobStatus": "Completed",
+        "completedOn": "2026-07-03T09:15:00Z",
+        "total": 425,
+        "summaryOfWork": "Replaced a failed capacitor and restored cooling throughout the home."
+      },
+      {
+        "id": 1003,
+        "jobNumber": "JOB-125",
+        "locationId": 501,
+        "jobTypeId": 203,
+        "jobStatus": "Completed",
+        "completedOn": "2026-07-03T16:45:00Z",
+        "total": 1200,
+        "summaryOfWork": "Replaced a damaged service panel and tested the new breakers."
+      }
+    ]
+  },
+  "jobTypes": [
+    { "id": 201, "name": "Drain Cleaning", "class": "Plumbing", "summary": "" },
+    { "id": 202, "name": "AC Repair", "class": "HVAC", "summary": "" },
+    { "id": 203, "name": "Panel Replacement", "class": "Electrical", "summary": "" }
+  ],
+  "locations": [
     {
-      "id": 1001,
-      "number": "JOB-123",
-      "status": "Completed",
-      "completedOn": "2023-10-25T14:30:00Z",
-      "totalAmount": 750.0,
-      "customer": { "name": "John Doe" }
+      "id": 501,
+      "name": "Private customer",
+      "address": { "street": "10 Main Street", "city": "Newark", "state": "NJ", "zip": "07102" }
     },
     {
-      "id": 1002,
-      "number": "JOB-124",
-      "status": "Completed",
-      "completedOn": "2023-10-26T09:15:00Z",
-      "totalAmount": 425.0,
-      "customer": { "name": "Jane Smith" }
-    },
-    {
-      "id": 1003,
-      "number": "JOB-125",
-      "status": "Completed",
-      "completedOn": "2023-10-26T16:45:00Z",
-      "totalAmount": 1200.0,
-      "customer": { "name": "Bob Builder" }
+      "id": 502,
+      "name": "Private customer",
+      "address": { "street": "20 Broad Street", "city": "Newark", "state": "NJ", "zip": "07102" }
     }
   ]
 }
