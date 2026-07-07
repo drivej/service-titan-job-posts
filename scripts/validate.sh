@@ -19,6 +19,9 @@ npm test --prefix service
 echo "Linting PHP files..."
 git ls-files '*.php' | xargs -n 1 php -l
 
+echo "Building installable WordPress plugin zip..."
+sh scripts/build-plugin-zip.sh
+
 if [ -n "${WP_ROOT:-}" ]; then
   echo "Running WordPress integration test..."
   php tests/wordpress-integration.php

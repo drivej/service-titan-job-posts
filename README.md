@@ -191,6 +191,19 @@ WP_ROOT="/path/to/wordpress" php tests/wordpress-integration.php
 
 GitHub Actions runs the same non-WordPress checks on push and pull request.
 
+## Release packaging
+
+Build the customer-installable WordPress plugin zip with:
+
+```bash
+sh scripts/build-plugin-zip.sh
+```
+
+The zip is written to `dist/service-titan-job-post.zip` and includes only the
+WordPress plugin runtime: PHP files, block assets, and plugin docs. It
+deliberately excludes the hosted service, Sevalla worker, tests, local
+environment files, and dependency folders.
+
 ## Security notes
 
 - Keep `.env` out of version control; it is ignored by this repository.
