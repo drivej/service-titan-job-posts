@@ -173,6 +173,24 @@ Publishing makes the job eligible for location-page blocks and the normal
 WordPress sitemap. Uninstalling removes credentials and plugin settings but
 preserves job posts and editorial content.
 
+## Validation
+
+Run the repo-level validation script before committing:
+
+```bash
+sh scripts/validate.sh
+```
+
+It checks worker syntax/tests, hosted service syntax/tests, PHP lint, and Git
+whitespace. If `WP_ROOT` points at a disposable WordPress install, it also runs
+the integration test:
+
+```bash
+WP_ROOT="/path/to/wordpress" php tests/wordpress-integration.php
+```
+
+GitHub Actions runs the same non-WordPress checks on push and pull request.
+
 ## Security notes
 
 - Keep `.env` out of version control; it is ignored by this repository.
