@@ -182,6 +182,10 @@ should verify:
 - the service and location terms are correct;
 - the post is useful and distinct enough to publish.
 
+The Local Jobs admin list includes completed date, service/location, and source
+update columns. Editors can sort by completed date and filter the list to jobs
+that need ServiceTitan source-update review.
+
 New imports use the **Job Details** block as their default post body. The
 generated summary is stored in the excerpt and job meta, so the block can render
 consistent visitor-facing details and JSON-LD immediately after an editor

@@ -287,6 +287,34 @@ try {
         'Changed source details were not saved for editorial comparison.'
     );
     $admin = new ST_Sync_Admin();
+    $admin_columns = $admin->job_list_columns([
+        'cb'    => '<input type="checkbox">',
+        'title' => 'Title',
+        'date'  => 'Date',
+    ]);
+    st_test_assert(
+        isset($admin_columns['st_job_completed'], $admin_columns['st_job_service_location'], $admin_columns['st_job_source_update']),
+        'Local Jobs admin columns did not include review metadata.'
+    );
+    $sortable_columns = $admin->sortable_job_list_columns([]);
+    st_test_assert(
+        'st_job_completed' === ($sortable_columns['st_job_completed'] ?? ''),
+        'Local Jobs completed-date column was not sortable.'
+    );
+    ob_start();
+    $admin->render_job_list_column('st_job_source_update', $approved_id);
+    $source_update_column = (string) ob_get_clean();
+    st_test_assert(
+        false !== strpos($source_update_column, 'Review update'),
+        'Local Jobs admin source-update column did not flag a pending source change.'
+    );
+    ob_start();
+    $admin->render_job_list_filters('st_job');
+    $filter_markup = (string) ob_get_clean();
+    st_test_assert(
+        false !== strpos($filter_markup, 'st_sync_source_update'),
+        'Local Jobs admin list did not render the source-update filter.'
+    );
     $apply_result = $admin->apply_pending_job_update($approved_id);
     st_test_assert(! is_wp_error($apply_result), 'Applying a reviewed source update failed.');
     st_test_assert('publish' === get_post_status($approved_id), 'Applying a reviewed update changed the post status.');

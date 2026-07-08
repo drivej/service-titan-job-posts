@@ -22,6 +22,11 @@ class ST_Sync_Admin
         add_action('add_meta_boxes_st_job', [$this, 'add_job_update_meta_box']);
         add_action('admin_post_st_sync_apply_job_update', [$this, 'apply_job_update_action']);
         add_action('admin_post_st_sync_dismiss_job_update', [$this, 'dismiss_job_update_action']);
+        add_filter('manage_st_job_posts_columns', [$this, 'job_list_columns']);
+        add_action('manage_st_job_posts_custom_column', [$this, 'render_job_list_column'], 10, 2);
+        add_filter('manage_edit-st_job_sortable_columns', [$this, 'sortable_job_list_columns']);
+        add_action('restrict_manage_posts', [$this, 'render_job_list_filters']);
+        add_action('pre_get_posts', [$this, 'filter_job_list_query']);
         add_action('update_option_st_sync_options', [$this, 'sync_policy'], 10, 2);
     }
 
@@ -457,6 +462,117 @@ class ST_Sync_Admin
         return true;
     }
 
+    public function job_list_columns(array $columns): array
+    {
+        $next = [];
+        foreach ($columns as $key => $label) {
+            $next[$key] = $label;
+            if ('title' === $key) {
+                $next['st_job_completed'] = __('Completed', 'service-titan-job-post');
+                $next['st_job_service_location'] = __('Service / Location', 'service-titan-job-post');
+                $next['st_job_source_update'] = __('Source update', 'service-titan-job-post');
+            }
+        }
+
+        return $next;
+    }
+
+    public function render_job_list_column(string $column, int $post_id): void
+    {
+        if ('st_job_completed' === $column) {
+            $completed = (string) get_post_meta($post_id, 'st_job_date', true);
+            echo esc_html($completed ? $this->format_admin_date($completed) : '—');
+            return;
+        }
+
+        if ('st_job_service_location' === $column) {
+            $service = $this->term_names($post_id, 'st_service');
+            $location = $this->term_names($post_id, 'st_location');
+            if ('' === $service) {
+                $service = (string) get_post_meta($post_id, 'st_job_service', true);
+            }
+            if ('' === $location) {
+                $location = trim(implode(', ', array_filter([
+                    (string) get_post_meta($post_id, 'st_job_city', true),
+                    (string) get_post_meta($post_id, 'st_job_state', true),
+                ])));
+            }
+            echo esc_html(implode(' / ', array_filter([$service, $location])) ?: '—');
+            return;
+        }
+
+        if ('st_job_source_update' === $column) {
+            if ('1' === get_post_meta($post_id, 'st_job_update_available', true)) {
+                echo '<strong class="st-sync-update-available">' . esc_html__('Review update', 'service-titan-job-post') . '</strong>';
+            } else {
+                echo esc_html__('Current', 'service-titan-job-post');
+            }
+        }
+    }
+
+    public function sortable_job_list_columns(array $columns): array
+    {
+        $columns['st_job_completed'] = 'st_job_completed';
+        return $columns;
+    }
+
+    public function render_job_list_filters(string $post_type): void
+    {
+        if ('st_job' !== $post_type) {
+            return;
+        }
+
+        $selected = isset($_GET['st_sync_source_update']) ? sanitize_key(wp_unslash($_GET['st_sync_source_update'])) : '';
+        ?>
+        <label class="screen-reader-text" for="st-sync-source-update-filter"><?php esc_html_e('Filter by source update status', 'service-titan-job-post'); ?></label>
+        <select id="st-sync-source-update-filter" name="st_sync_source_update">
+            <option value=""><?php esc_html_e('All source updates', 'service-titan-job-post'); ?></option>
+            <option value="available" <?php selected($selected, 'available'); ?>><?php esc_html_e('Needs source review', 'service-titan-job-post'); ?></option>
+            <option value="current" <?php selected($selected, 'current'); ?>><?php esc_html_e('Current source', 'service-titan-job-post'); ?></option>
+        </select>
+        <?php
+    }
+
+    public function filter_job_list_query(WP_Query $query): void
+    {
+        if (! is_admin() || ! $query->is_main_query() || 'st_job' !== $query->get('post_type')) {
+            return;
+        }
+
+        if ('st_job_completed' === $query->get('orderby')) {
+            $query->set('meta_key', 'st_job_date');
+            $query->set('orderby', 'meta_value');
+        }
+
+        $source_update = isset($_GET['st_sync_source_update']) ? sanitize_key(wp_unslash($_GET['st_sync_source_update'])) : '';
+        if (! in_array($source_update, ['available', 'current'], true)) {
+            return;
+        }
+
+        $meta_query = $query->get('meta_query');
+        $meta_query = is_array($meta_query) ? $meta_query : [];
+        if ('available' === $source_update) {
+            $meta_query[] = [
+                'key'   => 'st_job_update_available',
+                'value' => '1',
+            ];
+        } else {
+            $meta_query[] = [
+                'relation' => 'OR',
+                [
+                    'key'     => 'st_job_update_available',
+                    'compare' => 'NOT EXISTS',
+                ],
+                [
+                    'key'     => 'st_job_update_available',
+                    'value'   => '1',
+                    'compare' => '!=',
+                ],
+            ];
+        }
+        $query->set('meta_query', $meta_query);
+    }
+
     public function sync_policy($old_value, $new_value): void
     {
         unset($old_value);
@@ -663,6 +779,24 @@ class ST_Sync_Admin
     private function title_from_slug(string $slug): string
     {
         return ucwords(str_replace('-', ' ', sanitize_title($slug)));
+    }
+
+    private function format_admin_date(string $date): string
+    {
+        $timestamp = strtotime($date);
+        return false === $timestamp
+            ? $date
+            : wp_date(get_option('date_format'), $timestamp);
+    }
+
+    private function term_names(int $post_id, string $taxonomy): string
+    {
+        $terms = wp_get_post_terms($post_id, $taxonomy);
+        if (is_wp_error($terms) || empty($terms)) {
+            return '';
+        }
+
+        return implode(', ', wp_list_pluck($terms, 'name'));
     }
 
     private function has_job_details_block(int $post_id): bool
