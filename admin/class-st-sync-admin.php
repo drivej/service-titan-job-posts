@@ -13,6 +13,7 @@ class ST_Sync_Admin
     {
         add_action('admin_menu', [$this, 'add_plugin_admin_menu']);
         add_action('admin_init', [$this, 'register_st_settings']);
+        add_action('admin_post_st_sync_checkout', [$this, 'start_checkout']);
         add_action('admin_post_st_sync_activate', [$this, 'activate_site']);
         add_action('admin_post_st_sync_connect', [$this, 'connect_servicetitan']);
         add_action('admin_post_st_sync_refresh', [$this, 'refresh_status']);
@@ -168,6 +169,29 @@ class ST_Sync_Admin
                     <?php esc_html_e('This build does not have a hosted service URL configured.', 'service-titan-job-post'); ?>
                 </p></div>
             <?php elseif (! $connected) : ?>
+                <h2><?php esc_html_e('Start subscription', 'service-titan-job-post'); ?></h2>
+                <p><?php esc_html_e('Create a monthly or yearly subscription, then return with the issued license key to activate this site.', 'service-titan-job-post'); ?></p>
+                <form action="<?php echo esc_url(admin_url('admin-post.php')); ?>" method="post">
+                    <input type="hidden" name="action" value="st_sync_checkout">
+                    <?php wp_nonce_field('st_sync_checkout'); ?>
+                    <table class="form-table"><tbody>
+                        <tr>
+                            <th><label for="st-checkout-email"><?php esc_html_e('Billing email', 'service-titan-job-post'); ?></label></th>
+                            <td><input id="st-checkout-email" type="email" name="billing_email" class="regular-text" value="<?php echo esc_attr((string) get_option('admin_email')); ?>" required></td>
+                        </tr>
+                        <tr>
+                            <th><label for="st-checkout-plan"><?php esc_html_e('Plan', 'service-titan-job-post'); ?></label></th>
+                            <td>
+                                <select id="st-checkout-plan" name="plan">
+                                    <option value="monthly"><?php esc_html_e('Monthly', 'service-titan-job-post'); ?></option>
+                                    <option value="yearly"><?php esc_html_e('Yearly', 'service-titan-job-post'); ?></option>
+                                </select>
+                            </td>
+                        </tr>
+                    </tbody></table>
+                    <?php submit_button(__('Start checkout', 'service-titan-job-post')); ?>
+                </form>
+
                 <h2><?php esc_html_e('Activate subscription', 'service-titan-job-post'); ?></h2>
                 <p><?php esc_html_e('Activation is validated by the hosted service. Editing this plugin cannot make the hosted worker deliver jobs without an eligible subscription.', 'service-titan-job-post'); ?></p>
                 <form action="<?php echo esc_url(admin_url('admin-post.php')); ?>" method="post">
@@ -199,6 +223,28 @@ class ST_Sync_Admin
             <?php endif; ?>
         </div>
         <?php
+    }
+
+    public function start_checkout(): void
+    {
+        $this->authorize_action('st_sync_checkout');
+        $email = isset($_POST['billing_email']) ? sanitize_email(wp_unslash($_POST['billing_email'])) : '';
+        $plan = isset($_POST['plan']) ? sanitize_key(wp_unslash($_POST['plan'])) : 'monthly';
+        $result = (new ST_Sync_Service_Client())->checkout($email, $plan);
+        if (is_wp_error($result)) {
+            $this->redirect_with_result($result, '');
+        }
+
+        $checkout_url = esc_url_raw((string) ($result['checkout_url'] ?? ''));
+        $scheme = (string) wp_parse_url($checkout_url, PHP_URL_SCHEME);
+        $license_key = sanitize_text_field((string) ($result['license_key'] ?? ''));
+        if ('https' !== $scheme || '' === $license_key) {
+            $this->set_notice('error', __('The hosted service returned an invalid checkout response.', 'service-titan-job-post'));
+            wp_safe_redirect(admin_url('admin.php?page=st-sync-settings'));
+            exit;
+        }
+
+        $this->render_checkout_interstitial($license_key, $checkout_url);
     }
 
     public function activate_site(): void
@@ -341,6 +387,34 @@ class ST_Sync_Admin
         return $parsed && $parsed->format('Y-m-d') === $date
             ? $date
             : self::defaults()['jobs_since'];
+    }
+
+    private function render_checkout_interstitial(string $license_key, string $checkout_url): void
+    {
+        require_once ABSPATH . 'wp-admin/admin-header.php';
+        ?>
+        <div class="wrap">
+            <h1><?php esc_html_e('Continue to subscription checkout', 'service-titan-job-post'); ?></h1>
+            <div class="notice notice-warning inline"><p>
+                <?php esc_html_e('Copy this license key before continuing. The plugin does not store it in WordPress, and you will need it after checkout completes.', 'service-titan-job-post'); ?>
+            </p></div>
+            <p><label for="st-issued-license-key"><strong><?php esc_html_e('License key', 'service-titan-job-post'); ?></strong></label></p>
+            <p><input id="st-issued-license-key" type="text" class="large-text code" readonly value="<?php echo esc_attr($license_key); ?>" onclick="this.select();"></p>
+            <p>
+                <a class="button button-primary button-hero" href="<?php echo esc_url($checkout_url); ?>">
+                    <?php esc_html_e('Continue to secure checkout', 'service-titan-job-post'); ?>
+                </a>
+                <a class="button button-secondary" href="<?php echo esc_url(admin_url('admin.php?page=st-sync-settings')); ?>">
+                    <?php esc_html_e('Back to plugin settings', 'service-titan-job-post'); ?>
+                </a>
+            </p>
+            <p class="description">
+                <?php esc_html_e('After the Stripe subscription is active, paste this license key into the activation form on this settings page.', 'service-titan-job-post'); ?>
+            </p>
+        </div>
+        <?php
+        require_once ABSPATH . 'wp-admin/admin-footer.php';
+        exit;
     }
 
     private function authorize_action(string $action): void

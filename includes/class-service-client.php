@@ -17,6 +17,32 @@ class ST_Sync_Service_Client
     /**
      * @return array|WP_Error
      */
+    public function checkout(string $email, string $plan)
+    {
+        $normalized_plan = in_array($plan, ['monthly', 'yearly'], true) ? $plan : 'monthly';
+        $normalized_email = strtolower(sanitize_email($email));
+        if ('' === $normalized_email || ! is_email($normalized_email)) {
+            return new WP_Error('st_sync_invalid_checkout_email', 'Enter a valid billing email address.');
+        }
+
+        $response = $this->request('POST', '/v1/billing/checkout', [
+            'email' => $normalized_email,
+            'plan'  => $normalized_plan,
+        ]);
+        if (is_wp_error($response)) {
+            return $response;
+        }
+
+        if (empty($response['checkout_url']) || empty($response['license_key'])) {
+            return new WP_Error('st_sync_invalid_checkout', 'The hosted service returned an incomplete checkout response.');
+        }
+
+        return $response;
+    }
+
+    /**
+     * @return array|WP_Error
+     */
     public function activate(string $license_key)
     {
         $installation_id = (string) get_option('st_sync_installation_id', '');

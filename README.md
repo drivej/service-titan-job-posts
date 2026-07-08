@@ -53,9 +53,11 @@ per block. Pending jobs never appear.
 3. Activate **ServiceTitan Local Job Content**.
 4. Use a non-Plain permalink structure.
 5. Open **Local Jobs Sync** in the WordPress admin.
-6. Activate the site with its subscription license.
-7. Send ServiceTitan tenant/client credentials to the hosted service.
-8. Configure content filters and service mappings.
+6. Start a monthly or yearly subscription checkout, or paste an existing
+   subscription license key.
+7. Activate the site with the subscription license after checkout is complete.
+8. Send ServiceTitan tenant/client credentials to the hosted service.
+9. Configure content filters and service mappings.
 
 Once activated, the Subscription panel includes a **Manage billing** button that
 opens the hosted Stripe Billing Portal. Canceling there stops future sync claims
@@ -103,6 +105,8 @@ run with a small overlap for safety.
 Checkout creates a Stripe subscription session and returns a one-time license
 key, but that key cannot activate a WordPress site until a signed Stripe webhook
 updates the server-side subscription to `active` or `trialing`.
+The plugin admin can start this checkout flow and shows the one-time license key
+before redirecting to Stripe; it does not save that key locally.
 
 Eligible means the server-side subscription is `active` or `trialing`. Canceled,
 unpaid, paused, past-due, incomplete, and revoked activations do not appear in

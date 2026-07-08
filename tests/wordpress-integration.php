@@ -330,6 +330,14 @@ try {
                     'current_period_end' => '2026-08-01T00:00:00Z',
                 ],
             ];
+        } elseif ('/v1/billing/checkout' === $path) {
+            $status = 201;
+            $payload = [
+                'checkout_url'        => 'https://checkout.stripe.test/session/' . $run_token,
+                'checkout_session_id' => 'cs_' . $run_token,
+                'license_key'         => 'checkout-license-key-must-not-be-stored',
+                'plan'                => (string) ($service_requests[count($service_requests) - 1]['body']['plan'] ?? 'monthly'),
+            ];
         } elseif ('/v1/licenses/status' === $path) {
             $payload = [
                 'site_id' => 'hosted-site-' . $run_token,
@@ -362,6 +370,24 @@ try {
     add_filter('pre_http_request', $http_mock, 10, 3);
 
     $service_client = new ST_Sync_Service_Client();
+    $checkout = $service_client->checkout('Owner@Example.com', 'yearly');
+    st_test_assert(
+        ! is_wp_error($checkout) &&
+        isset($checkout['checkout_url'], $checkout['license_key']) &&
+        0 === strpos((string) $checkout['checkout_url'], 'https://checkout.stripe.test/session/'),
+        'Hosted checkout creation failed.'
+    );
+    $checkout_request = array_values(array_filter($service_requests, static function ($request): bool {
+        return '/v1/billing/checkout' === $request['path'];
+    }))[0] ?? null;
+    st_test_assert(
+        is_array($checkout_request) &&
+        'POST' === $checkout_request['method'] &&
+        'owner@example.com' === ($checkout_request['body']['email'] ?? '') &&
+        'yearly' === ($checkout_request['body']['plan'] ?? ''),
+        'Hosted checkout did not send the normalized billing request.'
+    );
+
     $activation = $service_client->activate('license-key-must-not-be-stored');
     st_test_assert(! is_wp_error($activation) && $service_client->is_connected(), 'Hosted license activation failed.');
     $activation_request = array_values(array_filter($service_requests, static function ($request): bool {
@@ -392,6 +418,7 @@ try {
     $stored_site = serialize(get_option('st_sync_site', []));
     st_test_assert(
         false === strpos($stored_site, 'license-key-must-not-be-stored') &&
+        false === strpos($stored_site, 'checkout-license-key-must-not-be-stored') &&
         false === strpos($stored_site, 'client-secret-must-not-be-stored'),
         'License or ServiceTitan credentials were persisted in WordPress.'
     );
