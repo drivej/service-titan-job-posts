@@ -36,6 +36,13 @@ location fields blank, the block infers `plumbing` and `newark` from the page
 hierarchy. You can set the slugs explicitly when a site's page structure is
 different.
 
+Classic Editor and page-builder sites can use the same renderer with a
+shortcode:
+
+```text
+[st_recent_jobs service="plumbing" location="newark" count="3"]
+```
+
 Approved job posts are nested beneath that path:
 
 ```text

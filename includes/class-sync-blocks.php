@@ -12,6 +12,8 @@ class ST_Sync_Blocks
     public function __construct()
     {
         add_action('init', [$this, 'register_blocks']);
+        add_shortcode('st_recent_jobs', [$this, 'recent_jobs_shortcode']);
+        add_shortcode('service_titan_recent_jobs', [$this, 'recent_jobs_shortcode']);
     }
 
     public function register_blocks(): void
@@ -73,7 +75,7 @@ class ST_Sync_Blocks
         return (string) ob_get_clean();
     }
 
-    public function render_recent_jobs(array $attributes, string $content, WP_Block $block): string
+    public function render_recent_jobs(array $attributes, string $content, ?WP_Block $block = null): string
     {
         unset($content);
         $context = $this->resolve_service_location($attributes, $block);
@@ -129,11 +131,14 @@ class ST_Sync_Blocks
             );
         }
 
-        $wrapper = get_block_wrapper_attributes([
+        $wrapper_attributes = [
             'class' => 'st-recent-jobs',
             'data-service' => $context['service'],
             'data-location' => $context['location'],
-        ]);
+        ];
+        $wrapper = $block
+            ? get_block_wrapper_attributes($wrapper_attributes)
+            : $this->html_attributes($wrapper_attributes);
         $heading_id = ! empty($attributes['anchor'])
             ? sanitize_title((string) $attributes['anchor']) . '-heading'
             : wp_unique_id('st-recent-jobs-heading-');
@@ -190,7 +195,26 @@ class ST_Sync_Blocks
         return (string) ob_get_clean();
     }
 
-    private function resolve_service_location(array $attributes, WP_Block $block): array
+    public function recent_jobs_shortcode($attributes = []): string
+    {
+        $attributes = shortcode_atts([
+            'service'      => '',
+            'service_slug' => '',
+            'location'     => '',
+            'location_slug'=> '',
+            'count'        => '',
+            'heading'      => '',
+        ], is_array($attributes) ? $attributes : [], 'st_recent_jobs');
+
+        return $this->render_recent_jobs([
+            'serviceSlug'  => $attributes['service_slug'] ?: $attributes['service'],
+            'locationSlug' => $attributes['location_slug'] ?: $attributes['location'],
+            'jobsToShow'   => (int) $attributes['count'],
+            'heading'      => (string) $attributes['heading'],
+        ], '', null);
+    }
+
+    private function resolve_service_location(array $attributes, ?WP_Block $block = null): array
     {
         $service = sanitize_title((string) ($attributes['serviceSlug'] ?? ''));
         $location = sanitize_title((string) ($attributes['locationSlug'] ?? ''));
@@ -199,7 +223,7 @@ class ST_Sync_Blocks
             return compact('service', 'location');
         }
 
-        $post_id = isset($block->context['postId'])
+        $post_id = $block && isset($block->context['postId'])
             ? (int) $block->context['postId']
             : (int) get_queried_object_id();
         $page = get_post($post_id);
@@ -315,6 +339,19 @@ class ST_Sync_Blocks
         }
 
         return '<script type="application/ld+json">' . $json . '</script>';
+    }
+
+    private function html_attributes(array $attributes): string
+    {
+        $pairs = [];
+        foreach ($attributes as $key => $value) {
+            if ('' === (string) $value) {
+                continue;
+            }
+            $pairs[] = esc_attr((string) $key) . '="' . esc_attr((string) $value) . '"';
+        }
+
+        return implode(' ', $pairs);
     }
 
     private function prune_schema(array $data): array

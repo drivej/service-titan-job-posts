@@ -222,6 +222,21 @@ try {
         2 === substr_count(do_blocks($global_count_block), 'st-recent-jobs__card'),
         'An attribute-less block did not inherit the global recent-job count.'
     );
+    $shortcode_rendered = do_shortcode(sprintf(
+        '[st_recent_jobs service="%s" location="%s" count="2" heading="Shortcode Jobs"]',
+        esc_attr($service_slug),
+        esc_attr($location_slug)
+    ));
+    st_test_assert(
+        2 === substr_count($shortcode_rendered, 'st-recent-jobs__card') &&
+        false !== strpos($shortcode_rendered, 'Shortcode Jobs'),
+        'Recent jobs shortcode did not render the requested job cards.'
+    );
+    $shortcode_schemas = st_test_json_ld_scripts($shortcode_rendered);
+    st_test_assert(
+        'ItemList' === (($shortcode_schemas[0] ?? [])['@type'] ?? ''),
+        'Recent jobs shortcode did not reuse the ItemList JSON-LD renderer.'
+    );
 
     $approved_id = end($created_posts);
     global $post;
