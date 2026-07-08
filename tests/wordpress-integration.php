@@ -217,6 +217,8 @@ try {
         'city'         => 'Trenton Integration Test',
         'state'        => 'NJ',
         'location_slug'=> 'trenton-integration-test',
+        'location_id'  => 'location-updated',
+        'job_type_id'  => 'type-updated',
         'service_slug' => 'hvac-integration-test',
         'service_name' => 'HVAC Integration Test',
         'summary'      => 'This generated update must not replace approved editorial copy.',
@@ -245,8 +247,32 @@ try {
     );
     st_test_assert(
         $changed['summary'] === get_post_meta($approved_id, 'st_job_pending_summary', true) &&
-        $changed['city'] === get_post_meta($approved_id, 'st_job_pending_city', true),
+        $changed['city'] === get_post_meta($approved_id, 'st_job_pending_city', true) &&
+        $changed['service_name'] === get_post_meta($approved_id, 'st_job_pending_service_name', true) &&
+        $changed['location_id'] === get_post_meta($approved_id, 'st_job_pending_location_id', true),
         'Changed source details were not saved for editorial comparison.'
+    );
+    $admin = new ST_Sync_Admin();
+    $apply_result = $admin->apply_pending_job_update($approved_id);
+    st_test_assert(! is_wp_error($apply_result), 'Applying a reviewed source update failed.');
+    st_test_assert('publish' === get_post_status($approved_id), 'Applying a reviewed update changed the post status.');
+    st_test_assert(
+        false !== strpos((string) get_post_field('post_content', $approved_id), $changed['summary']),
+        'Applying a reviewed update did not update the job copy.'
+    );
+    st_test_assert($changed['completed_on'] === get_post_meta($approved_id, 'st_job_date', true), 'Applying a reviewed update did not update the job date.');
+    st_test_assert((float) $changed['total'] === (float) get_post_meta($approved_id, 'st_job_price', true), 'Applying a reviewed update did not update the job total.');
+    st_test_assert('0' === get_post_meta($approved_id, 'st_job_update_available', true), 'Applying a reviewed update did not clear the update flag.');
+    st_test_assert('' === get_post_meta($approved_id, 'st_job_pending_summary', true), 'Applying a reviewed update did not clear pending source details.');
+    $updated_service_term = get_term_by('slug', $changed['service_slug'], 'st_service');
+    $updated_location_term = get_term_by('slug', $changed['location_slug'], 'st_location');
+    st_test_assert($updated_service_term && $updated_location_term, 'Applying a reviewed update did not create updated terms.');
+    $created_terms[] = ['id' => (int) $updated_service_term->term_id, 'taxonomy' => 'st_service'];
+    $created_terms[] = ['id' => (int) $updated_location_term->term_id, 'taxonomy' => 'st_location'];
+    st_test_assert(
+        in_array((int) $updated_service_term->term_id, wp_get_post_terms($approved_id, 'st_service', ['fields' => 'ids']), true) &&
+        in_array((int) $updated_location_term->term_id, wp_get_post_terms($approved_id, 'st_location', ['fields' => 'ids']), true),
+        'Applying a reviewed update did not move the post to the reviewed service/location.'
     );
 
     $bad_hash = $changed;

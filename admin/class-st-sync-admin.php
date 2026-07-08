@@ -19,6 +19,9 @@ class ST_Sync_Admin
         add_action('admin_post_st_sync_refresh', [$this, 'refresh_status']);
         add_action('admin_post_st_sync_billing_portal', [$this, 'open_billing_portal']);
         add_action('admin_post_st_sync_deactivate', [$this, 'deactivate_site']);
+        add_action('add_meta_boxes_st_job', [$this, 'add_job_update_meta_box']);
+        add_action('admin_post_st_sync_apply_job_update', [$this, 'apply_job_update_action']);
+        add_action('admin_post_st_sync_dismiss_job_update', [$this, 'dismiss_job_update_action']);
         add_action('update_option_st_sync_options', [$this, 'sync_policy'], 10, 2);
     }
 
@@ -302,6 +305,156 @@ class ST_Sync_Admin
         $this->redirect_with_result($result, __('Site disconnected. Existing posts were preserved.', 'service-titan-job-post'));
     }
 
+    public function add_job_update_meta_box(WP_Post $post): void
+    {
+        if ('1' !== get_post_meta($post->ID, 'st_job_update_available', true)) {
+            return;
+        }
+
+        add_meta_box(
+            'st-sync-source-update',
+            __('ServiceTitan source update', 'service-titan-job-post'),
+            [$this, 'render_job_update_meta_box'],
+            'st_job',
+            'normal',
+            'high'
+        );
+    }
+
+    public function render_job_update_meta_box(WP_Post $post): void
+    {
+        $pending = $this->pending_job_update($post->ID);
+        if (empty($pending)) {
+            echo '<p>' . esc_html__('No pending source update is available.', 'service-titan-job-post') . '</p>';
+            return;
+        }
+
+        $rows = [
+            __('Summary', 'service-titan-job-post')      => $pending['summary'],
+            __('Completed on', 'service-titan-job-post') => $pending['completed_on'],
+            __('City', 'service-titan-job-post')         => $pending['city'],
+            __('State', 'service-titan-job-post')        => $pending['state'],
+            __('Service', 'service-titan-job-post')      => $pending['service_name'],
+            __('Location slug', 'service-titan-job-post')=> $pending['location_slug'],
+            __('Job type', 'service-titan-job-post')     => $pending['job_type_name'],
+        ];
+        ?>
+        <p><?php esc_html_e('ServiceTitan has newer source data for this job. Automation preserved the current editorial copy; apply this update only after review.', 'service-titan-job-post'); ?></p>
+        <table class="widefat striped"><tbody>
+            <?php foreach ($rows as $label => $value) : ?>
+                <?php if ('' === trim((string) $value)) { continue; } ?>
+                <tr>
+                    <th scope="row"><?php echo esc_html($label); ?></th>
+                    <td><?php echo esc_html((string) $value); ?></td>
+                </tr>
+            <?php endforeach; ?>
+        </tbody></table>
+        <p>
+            <?php $this->render_job_update_button($post->ID, 'st_sync_apply_job_update', __('Apply reviewed update', 'service-titan-job-post'), 'primary'); ?>
+            <?php $this->render_job_update_button($post->ID, 'st_sync_dismiss_job_update', __('Dismiss update', 'service-titan-job-post'), 'secondary'); ?>
+        </p>
+        <?php
+    }
+
+    /**
+     * @return true|WP_Error
+     */
+    public function apply_pending_job_update(int $post_id)
+    {
+        if ('st_job' !== get_post_type($post_id)) {
+            return new WP_Error('st_sync_invalid_job', __('This is not a Local Job post.', 'service-titan-job-post'));
+        }
+
+        $pending = $this->pending_job_update($post_id);
+        if (empty($pending)) {
+            return new WP_Error('st_sync_no_pending_update', __('No pending source update is available.', 'service-titan-job-post'));
+        }
+
+        $summary = sanitize_textarea_field($pending['summary']);
+        $city = sanitize_text_field($pending['city']);
+        $state = sanitize_text_field($pending['state']);
+        $service_slug = sanitize_title($pending['service_slug']);
+        $service_name = sanitize_text_field($pending['service_name']);
+        if ('' === $service_name && '' !== $service_slug) {
+            $service_name = $this->title_from_slug($service_slug);
+        }
+        $location_slug = sanitize_title($pending['location_slug']);
+        $job_type_name = sanitize_text_field($pending['job_type_name']);
+
+        $post_data = ['ID' => $post_id];
+        if ('' !== $summary) {
+            $post_data['post_content'] = wpautop(esc_html($summary));
+            $post_data['post_excerpt'] = $summary;
+        }
+        if ('' !== $job_type_name && '' !== $city) {
+            $post_data['post_title'] = sprintf('%s in %s', $job_type_name, $city);
+        }
+
+        $updated = wp_update_post($post_data, true);
+        if (is_wp_error($updated)) {
+            return $updated;
+        }
+
+        if ('' !== $summary) {
+            update_post_meta($post_id, 'st_job_summary', $summary);
+        }
+        $meta_map = [
+            'st_job_date'        => $pending['completed_on'],
+            'st_job_city'        => $city,
+            'st_job_state'       => $state,
+            'st_job_service'     => $service_name,
+            'st_job_location_id' => $pending['location_id'],
+            'st_job_type_id'     => $pending['job_type_id'],
+            'st_job_type_name'   => $job_type_name,
+        ];
+        foreach ($meta_map as $key => $value) {
+            if ('' !== trim((string) $value)) {
+                update_post_meta($post_id, $key, sanitize_text_field((string) $value));
+            }
+        }
+        if ('' !== trim((string) $pending['total']) && is_numeric($pending['total'])) {
+            update_post_meta($post_id, 'st_job_price', (float) $pending['total']);
+        }
+
+        if ('' !== $service_slug) {
+            $service_term = $this->ensure_term($service_name ?: $this->title_from_slug($service_slug), $service_slug, 'st_service');
+            if (is_wp_error($service_term)) {
+                return $service_term;
+            }
+            $service_result = wp_set_object_terms($post_id, [(int) $service_term], 'st_service', false);
+            if (is_wp_error($service_result)) {
+                return $service_result;
+            }
+        }
+
+        if ('' !== $location_slug) {
+            $location_term = $this->ensure_term($city ?: $this->title_from_slug($location_slug), $location_slug, 'st_location');
+            if (is_wp_error($location_term)) {
+                return $location_term;
+            }
+            $location_result = wp_set_object_terms($post_id, [(int) $location_term], 'st_location', false);
+            if (is_wp_error($location_result)) {
+                return $location_result;
+            }
+        }
+
+        $this->clear_pending_job_update($post_id);
+        return true;
+    }
+
+    /**
+     * @return true|WP_Error
+     */
+    public function dismiss_pending_job_update(int $post_id)
+    {
+        if ('st_job' !== get_post_type($post_id)) {
+            return new WP_Error('st_sync_invalid_job', __('This is not a Local Job post.', 'service-titan-job-post'));
+        }
+
+        $this->clear_pending_job_update($post_id);
+        return true;
+    }
+
     public function sync_policy($old_value, $new_value): void
     {
         unset($old_value);
@@ -381,6 +534,32 @@ class ST_Sync_Admin
         );
     }
 
+    private function render_job_update_button(int $post_id, string $action, string $label, string $type): void
+    {
+        ?>
+        <form action="<?php echo esc_url(admin_url('admin-post.php')); ?>" method="post" style="display:inline-block;margin-right:8px">
+            <input type="hidden" name="action" value="<?php echo esc_attr($action); ?>">
+            <input type="hidden" name="post_id" value="<?php echo esc_attr((string) $post_id); ?>">
+            <?php wp_nonce_field('st_sync_job_update_' . $post_id); ?>
+            <?php submit_button($label, $type, 'submit', false); ?>
+        </form>
+        <?php
+    }
+
+    public function apply_job_update_action(): void
+    {
+        $post_id = $this->authorized_job_update_post_id();
+        $result = $this->apply_pending_job_update($post_id);
+        $this->redirect_after_job_update($post_id, $result, __('ServiceTitan source update applied.', 'service-titan-job-post'));
+    }
+
+    public function dismiss_job_update_action(): void
+    {
+        $post_id = $this->authorized_job_update_post_id();
+        $result = $this->dismiss_pending_job_update($post_id);
+        $this->redirect_after_job_update($post_id, $result, __('ServiceTitan source update dismissed.', 'service-titan-job-post'));
+    }
+
     private function sanitize_date(string $date): string
     {
         $parsed = DateTimeImmutable::createFromFormat('!Y-m-d', $date);
@@ -414,6 +593,99 @@ class ST_Sync_Admin
         </div>
         <?php
         require_once ABSPATH . 'wp-admin/admin-footer.php';
+        exit;
+    }
+
+    private function pending_job_update(int $post_id): array
+    {
+        if ('1' !== get_post_meta($post_id, 'st_job_update_available', true)) {
+            return [];
+        }
+
+        return [
+            'summary'       => (string) get_post_meta($post_id, 'st_job_pending_summary', true),
+            'completed_on'  => (string) get_post_meta($post_id, 'st_job_pending_completed_on', true),
+            'city'          => (string) get_post_meta($post_id, 'st_job_pending_city', true),
+            'state'         => (string) get_post_meta($post_id, 'st_job_pending_state', true),
+            'service_slug'  => (string) get_post_meta($post_id, 'st_job_pending_service_slug', true),
+            'service_name'  => (string) get_post_meta($post_id, 'st_job_pending_service_name', true),
+            'location_slug' => (string) get_post_meta($post_id, 'st_job_pending_location_slug', true),
+            'location_id'   => (string) get_post_meta($post_id, 'st_job_pending_location_id', true),
+            'job_type_id'   => (string) get_post_meta($post_id, 'st_job_pending_job_type_id', true),
+            'job_type_name' => (string) get_post_meta($post_id, 'st_job_pending_job_type_name', true),
+            'total'         => (string) get_post_meta($post_id, 'st_job_pending_total', true),
+        ];
+    }
+
+    private function clear_pending_job_update(int $post_id): void
+    {
+        update_post_meta($post_id, 'st_job_update_available', '0');
+        foreach ([
+            'st_job_pending_summary',
+            'st_job_pending_completed_on',
+            'st_job_pending_city',
+            'st_job_pending_state',
+            'st_job_pending_service_slug',
+            'st_job_pending_service_name',
+            'st_job_pending_location_slug',
+            'st_job_pending_location_id',
+            'st_job_pending_job_type_id',
+            'st_job_pending_job_type_name',
+            'st_job_pending_total',
+        ] as $key) {
+            delete_post_meta($post_id, $key);
+        }
+    }
+
+    /**
+     * @return int|WP_Error
+     */
+    private function ensure_term(string $name, string $slug, string $taxonomy)
+    {
+        $existing = term_exists($slug, $taxonomy);
+        if (is_array($existing)) {
+            return (int) $existing['term_id'];
+        }
+        if (is_int($existing)) {
+            return $existing;
+        }
+
+        $created = wp_insert_term($name, $taxonomy, ['slug' => $slug]);
+        if (is_wp_error($created)) {
+            return $created;
+        }
+
+        return (int) $created['term_id'];
+    }
+
+    private function title_from_slug(string $slug): string
+    {
+        return ucwords(str_replace('-', ' ', sanitize_title($slug)));
+    }
+
+    private function authorized_job_update_post_id(): int
+    {
+        $post_id = isset($_POST['post_id']) ? (int) $_POST['post_id'] : 0;
+        if ($post_id <= 0 || ! current_user_can('edit_post', $post_id)) {
+            wp_die(
+                esc_html__('You are not allowed to update this Local Job.', 'service-titan-job-post'),
+                '',
+                ['response' => 403]
+            );
+        }
+
+        check_admin_referer('st_sync_job_update_' . $post_id);
+        return $post_id;
+    }
+
+    private function redirect_after_job_update(int $post_id, $result, string $success_message): void
+    {
+        if (is_wp_error($result)) {
+            $this->set_notice('error', $result->get_error_message());
+        } else {
+            $this->set_notice('success', $success_message);
+        }
+        wp_safe_redirect(get_edit_post_link($post_id, 'url') ?: admin_url('edit.php?post_type=st_job'));
         exit;
     }
 

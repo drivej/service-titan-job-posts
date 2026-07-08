@@ -126,8 +126,12 @@ class ST_Sync_Activator
             'st_job_pending_city',
             'st_job_pending_state',
             'st_job_pending_service_slug',
+            'st_job_pending_service_name',
             'st_job_pending_location_slug',
+            'st_job_pending_location_id',
+            'st_job_pending_job_type_id',
             'st_job_pending_job_type_name',
+            'st_job_pending_total',
         ];
 
         foreach ($string_fields as $field) {

@@ -163,8 +163,12 @@ class ST_Sync_Sevalla_API
             update_post_meta($existing_id, 'st_job_pending_city', $city);
             update_post_meta($existing_id, 'st_job_pending_state', $state);
             update_post_meta($existing_id, 'st_job_pending_service_slug', $service_slug);
+            update_post_meta($existing_id, 'st_job_pending_service_name', $service_name);
             update_post_meta($existing_id, 'st_job_pending_location_slug', $location_slug);
+            update_post_meta($existing_id, 'st_job_pending_location_id', sanitize_text_field((string) ($payload['location_id'] ?? '')));
+            update_post_meta($existing_id, 'st_job_pending_job_type_id', sanitize_text_field((string) ($payload['job_type_id'] ?? '')));
             update_post_meta($existing_id, 'st_job_pending_job_type_name', $job_type_name);
+            update_post_meta($existing_id, 'st_job_pending_total', isset($payload['total']) ? (string) (float) $payload['total'] : '');
             if ($delivery_id) {
                 set_transient($delivery_key, 1, 30 * DAY_IN_SECONDS);
             }

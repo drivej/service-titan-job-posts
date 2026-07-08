@@ -182,6 +182,11 @@ Publishing makes the job eligible for location-page blocks and the normal
 WordPress sitemap. Uninstalling removes credentials and plugin settings but
 preserves job posts and editorial content.
 
+If ServiceTitan later changes a job after it has entered review, the sync does
+not overwrite the WordPress post. Instead, the Local Job edit screen shows a
+**ServiceTitan source update** box where an editor can compare the new source
+details and either apply the reviewed update or dismiss it.
+
 ## Validation
 
 Run the repo-level validation script before committing:
