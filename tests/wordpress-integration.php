@@ -160,6 +160,10 @@ try {
         $created_posts[] = $job_post_id;
 
         st_test_assert('pending' === get_post_status($job_post_id), 'New job was not pending review.');
+        st_test_assert(
+            has_block('st-sync/job-details', (string) get_post_field('post_content', $job_post_id)),
+            'New job did not use the Job Details block by default.'
+        );
         wp_update_post(['ID' => $job_post_id, 'post_status' => 'publish']);
         $job_permalink = get_permalink($job_post_id);
         st_test_assert(
@@ -223,7 +227,7 @@ try {
     global $post;
     $post = get_post($approved_id);
     setup_postdata($post);
-    $details_rendered = do_blocks('<!-- wp:st-sync/job-details /-->');
+    $details_rendered = do_blocks((string) get_post_field('post_content', $approved_id));
     wp_reset_postdata();
     $details_schemas = st_test_json_ld_scripts($details_rendered);
     $service_schema = $details_schemas[0] ?? [];
@@ -287,13 +291,25 @@ try {
     st_test_assert(! is_wp_error($apply_result), 'Applying a reviewed source update failed.');
     st_test_assert('publish' === get_post_status($approved_id), 'Applying a reviewed update changed the post status.');
     st_test_assert(
-        false !== strpos((string) get_post_field('post_content', $approved_id), $changed['summary']),
-        'Applying a reviewed update did not update the job copy.'
+        $changed['summary'] === get_post_field('post_excerpt', $approved_id),
+        'Applying a reviewed update did not update the generated excerpt.'
     );
     st_test_assert($changed['completed_on'] === get_post_meta($approved_id, 'st_job_date', true), 'Applying a reviewed update did not update the job date.');
     st_test_assert((float) $changed['total'] === (float) get_post_meta($approved_id, 'st_job_price', true), 'Applying a reviewed update did not update the job total.');
     st_test_assert('0' === get_post_meta($approved_id, 'st_job_update_available', true), 'Applying a reviewed update did not clear the update flag.');
     st_test_assert('' === get_post_meta($approved_id, 'st_job_pending_summary', true), 'Applying a reviewed update did not clear pending source details.');
+    st_test_assert(
+        has_block('st-sync/job-details', (string) get_post_field('post_content', $approved_id)),
+        'Applying a reviewed update removed the default Job Details block.'
+    );
+    $post = get_post($approved_id);
+    setup_postdata($post);
+    $applied_rendered = do_blocks((string) get_post_field('post_content', $approved_id));
+    wp_reset_postdata();
+    st_test_assert(
+        false !== strpos($applied_rendered, $changed['summary']),
+        'Applying a reviewed update did not update the rendered Job Details block.'
+    );
     $updated_service_term = get_term_by('slug', $changed['service_slug'], 'st_service');
     $updated_location_term = get_term_by('slug', $changed['location_slug'], 'st_location');
     st_test_assert($updated_service_term && $updated_location_term, 'Applying a reviewed update did not create updated terms.');

@@ -182,6 +182,11 @@ should verify:
 - the service and location terms are correct;
 - the post is useful and distinct enough to publish.
 
+New imports use the **Job Details** block as their default post body. The
+generated summary is stored in the excerpt and job meta, so the block can render
+consistent visitor-facing details and JSON-LD immediately after an editor
+publishes the post.
+
 Publishing makes the job eligible for location-page blocks and the normal
 WordPress sitemap. Uninstalling removes credentials and plugin settings but
 preserves job posts and editorial content.

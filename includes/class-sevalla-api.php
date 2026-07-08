@@ -204,7 +204,7 @@ class ST_Sync_Sevalla_API
                 $city
             ),
             'post_name'    => sanitize_title($job_number),
-            'post_content' => wpautop(esc_html($summary)),
+            'post_content' => '<!-- wp:st-sync/job-details /-->',
             'post_excerpt' => $summary,
             'meta_input'   => [
                 'st_job_tenant_id'   => $tenant_id,

@@ -383,8 +383,10 @@ class ST_Sync_Admin
 
         $post_data = ['ID' => $post_id];
         if ('' !== $summary) {
-            $post_data['post_content'] = wpautop(esc_html($summary));
             $post_data['post_excerpt'] = $summary;
+            if (! $this->has_job_details_block($post_id)) {
+                $post_data['post_content'] = wpautop(esc_html($summary));
+            }
         }
         if ('' !== $job_type_name && '' !== $city) {
             $post_data['post_title'] = sprintf('%s in %s', $job_type_name, $city);
@@ -661,6 +663,12 @@ class ST_Sync_Admin
     private function title_from_slug(string $slug): string
     {
         return ucwords(str_replace('-', ' ', sanitize_title($slug)));
+    }
+
+    private function has_job_details_block(int $post_id): bool
+    {
+        $content = (string) get_post_field('post_content', $post_id);
+        return has_block('st-sync/job-details', $content);
     }
 
     private function authorized_job_update_post_id(): int
