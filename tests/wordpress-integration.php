@@ -76,6 +76,15 @@ function st_test_request(array $payload, array $site): WP_REST_Request
     return $request;
 }
 
+function st_test_json_ld_scripts(string $html): array
+{
+    preg_match_all('#<script type="application/ld\+json">(.*?)</script>#s', $html, $matches);
+    return array_values(array_filter(array_map(static function (string $json) {
+        $decoded = json_decode($json, true);
+        return is_array($decoded) ? $decoded : null;
+    }, $matches[1] ?? [])));
+}
+
 try {
     $parent_id = wp_insert_post([
         'post_type'   => 'page',
@@ -187,6 +196,14 @@ try {
         false !== strpos($rendered, 'Integration job number 4'),
         'Location block omitted the most recent job.'
     );
+    $recent_schemas = st_test_json_ld_scripts($rendered);
+    $item_list = $recent_schemas[0] ?? [];
+    st_test_assert(
+        'ItemList' === ($item_list['@type'] ?? '') &&
+        3 === count($item_list['itemListElement'] ?? []) &&
+        'Service' === ($item_list['itemListElement'][0]['item']['@type'] ?? ''),
+        'Recent jobs block did not emit Service ItemList JSON-LD.'
+    );
 
     update_option('st_sync_options', array_merge(
         is_array($previous_sync_options) ? $previous_sync_options : [],
@@ -203,6 +220,19 @@ try {
     );
 
     $approved_id = end($created_posts);
+    global $post;
+    $post = get_post($approved_id);
+    setup_postdata($post);
+    $details_rendered = do_blocks('<!-- wp:st-sync/job-details /-->');
+    wp_reset_postdata();
+    $details_schemas = st_test_json_ld_scripts($details_rendered);
+    $service_schema = $details_schemas[0] ?? [];
+    st_test_assert(
+        'Service' === ($service_schema['@type'] ?? '') &&
+        false !== strpos((string) ($service_schema['description'] ?? ''), 'Integration job number 4') &&
+        'Newark Integration Test' === ($service_schema['areaServed']['address']['addressLocality'] ?? ''),
+        'Job details block did not emit local Service JSON-LD.'
+    );
     $approved_content = (string) get_post_field('post_content', $approved_id);
     $approved_permalink = get_permalink($approved_id);
     $approved_date = get_post_meta($approved_id, 'st_job_date', true);

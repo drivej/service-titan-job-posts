@@ -67,6 +67,9 @@ class ST_Sync_Blocks
             <?php endif; ?>
         </article>
         <?php
+        if (! is_admin()) {
+            echo $this->json_ld_script($this->job_schema($post_id)); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+        }
         return (string) ob_get_clean();
     }
 
@@ -136,6 +139,8 @@ class ST_Sync_Blocks
             : wp_unique_id('st-recent-jobs-heading-');
 
         ob_start();
+        $schemas = [];
+        $position = 1;
         ?>
         <section <?php echo $wrapper; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?> aria-labelledby="<?php echo esc_attr($heading_id); ?>">
             <h2 id="<?php echo esc_attr($heading_id); ?>" class="st-recent-jobs__heading"><?php echo esc_html($heading); ?></h2>
@@ -145,6 +150,13 @@ class ST_Sync_Blocks
                     $job_id = (int) get_the_ID();
                     $summary = $this->public_summary($job_id);
                     $date = (string) get_post_meta($job_id, 'st_job_date', true);
+                    $schemas[] = [
+                        '@type'    => 'ListItem',
+                        'position' => $position,
+                        'url'      => get_permalink($job_id),
+                        'item'     => $this->job_schema($job_id, false),
+                    ];
+                    $position++;
                     ?>
                     <article class="st-recent-jobs__card">
                         <h3 class="st-recent-jobs__title">
@@ -161,6 +173,16 @@ class ST_Sync_Blocks
                     </article>
                 <?php endwhile; ?>
             </div>
+            <?php
+            if (! is_admin()) {
+                echo $this->json_ld_script([
+                    '@context' => 'https://schema.org',
+                    '@type'    => 'ItemList',
+                    'name'     => $heading,
+                    'itemListElement' => $schemas,
+                ]); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+            }
+            ?>
         </section>
         <?php
         wp_reset_postdata();
@@ -225,6 +247,92 @@ class ST_Sync_Blocks
         }
 
         return '';
+    }
+
+    private function job_schema(int $post_id, bool $include_context = true): array
+    {
+        $url = get_permalink($post_id);
+        $city = (string) get_post_meta($post_id, 'st_job_city', true);
+        $state = (string) get_post_meta($post_id, 'st_job_state', true);
+        $service = (string) get_post_meta($post_id, 'st_job_service', true);
+        $job_type = (string) get_post_meta($post_id, 'st_job_type_name', true);
+        $summary = $this->public_summary($post_id);
+        $completed_on = (string) get_post_meta($post_id, 'st_job_date', true);
+        $schema = [
+            '@type'            => 'Service',
+            '@id'              => untrailingslashit($url) . '#service',
+            'url'              => $url,
+            'name'             => get_the_title($post_id),
+            'description'      => $summary,
+            'serviceType'      => $service ?: $job_type,
+            'provider'         => [
+                '@type' => 'LocalBusiness',
+                'name'  => get_bloginfo('name'),
+                'url'   => home_url('/'),
+            ],
+            'areaServed'       => [
+                '@type'   => 'Place',
+                'name'    => trim(implode(', ', array_filter([$city, $state]))),
+                'address' => [
+                    '@type'           => 'PostalAddress',
+                    'addressLocality' => $city,
+                    'addressRegion'   => $state,
+                ],
+            ],
+            'datePublished'    => get_post_time('c', true, $post_id),
+            'dateModified'     => get_post_modified_time('c', true, $post_id),
+            'mainEntityOfPage' => $url,
+        ];
+
+        if ('' !== $completed_on) {
+            $schema['serviceOutput'] = sprintf(
+                /* translators: %s: completed date */
+                __('Completed service on %s', 'service-titan-job-post'),
+                $this->format_date($completed_on)
+            );
+        }
+
+        if ($include_context) {
+            $schema = ['@context' => 'https://schema.org'] + $schema;
+        }
+
+        return $this->prune_schema($schema);
+    }
+
+    private function json_ld_script(array $data): string
+    {
+        $json = wp_json_encode(
+            $data,
+            JSON_UNESCAPED_SLASHES |
+            JSON_UNESCAPED_UNICODE |
+            JSON_HEX_TAG |
+            JSON_HEX_AMP |
+            JSON_HEX_APOS |
+            JSON_HEX_QUOT
+        );
+        if (! $json) {
+            return '';
+        }
+
+        return '<script type="application/ld+json">' . $json . '</script>';
+    }
+
+    private function prune_schema(array $data): array
+    {
+        foreach ($data as $key => $value) {
+            if (is_array($value)) {
+                $value = $this->prune_schema($value);
+            }
+
+            if ('' === $value || null === $value || (is_array($value) && empty($value))) {
+                unset($data[$key]);
+                continue;
+            }
+
+            $data[$key] = $value;
+        }
+
+        return $data;
     }
 
     private function editor_notice(string $message): string

@@ -45,6 +45,10 @@ Approved job posts are nested beneath that path:
 The block shows three jobs by default. The count is configurable globally and
 per block. Pending jobs never appear.
 
+The Recent Local Jobs and Job Details blocks emit conservative Schema.org
+JSON-LD (`ItemList` and `Service`) for published jobs, using the same reviewed
+summary, service, city, date, and permalink that visitors see.
+
 ## WordPress installation
 
 1. Copy this directory to `wp-content/plugins/service-titan-job-post`.
