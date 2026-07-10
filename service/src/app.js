@@ -199,6 +199,24 @@ function syncStatusForSite(site) {
   };
 }
 
+function connectionStatus(connection) {
+  if (!connection) {
+    return {
+      connected: false,
+      tenant_id: '',
+      environment: '',
+      updated_at: null
+    };
+  }
+
+  return {
+    connected: true,
+    tenant_id: String(connection.tenant_id || ''),
+    environment: String(connection.environment || ''),
+    updated_at: isoStringOrNull(connection.updated_at)
+  };
+}
+
 function sanitizeSyncRun(input) {
   const siteId = String(input.site_id || '').trim();
   const status = String(input.status || '').trim().toLowerCase();
@@ -391,13 +409,14 @@ async function handleRoute(request, rawBody, body, dependencies) {
   }
 
   if (request.method === 'GET' && url.pathname === '/v1/licenses/status') {
-    const { site, entitlement } = await requireSite(request, store, context);
+    const { site, entitlement, connection } = await requireSite(request, store, context);
     return {
       status: 200,
       payload: {
         site_id: site.id,
         site_url: site.site_url,
         entitlement,
+        connection: connectionStatus(connection),
         sync: syncStatusForSite(site)
       }
     };
@@ -420,7 +439,8 @@ async function handleRoute(request, rawBody, body, dependencies) {
       payload: {
         connected: true,
         tenant_id: connection.tenant_id,
-        environment: connection.environment
+        environment: connection.environment,
+        updated_at: isoStringOrNull(connection.updated_at)
       }
     };
   }

@@ -486,6 +486,12 @@ try {
                     'plan'               => 'monthly',
                     'current_period_end' => '2026-08-01T00:00:00Z',
                 ],
+                'connection' => [
+                    'connected'   => true,
+                    'tenant_id'   => '123456',
+                    'environment' => 'integration',
+                    'updated_at'  => '2026-07-07T12:01:00.000Z',
+                ],
                 'sync' => [
                     'last_successful_sync_at' => '2026-07-07T12:00:00.000Z',
                     'last_sync_attempt_at'    => '2026-07-07T12:05:00.000Z',
@@ -500,7 +506,12 @@ try {
                 ],
             ];
         } elseif ('/v1/connections/servicetitan' === $path) {
-            $payload = ['connected' => true, 'tenant_id' => '123456'];
+            $payload = [
+                'connected'   => true,
+                'tenant_id'   => '123456',
+                'environment' => 'integration',
+                'updated_at'  => '2026-07-07T12:01:00.000Z',
+            ];
         } elseif ('/v1/sites/policy' === $path) {
             $payload = ['updated' => true];
         } elseif ('/v1/billing/portal' === $path) {
@@ -555,8 +566,21 @@ try {
         'environment'  => 'integration',
     ]);
     st_test_assert(! is_wp_error($connection), 'Hosted ServiceTitan connection failed.');
+    $connected_site = get_option('st_sync_site', []);
+    st_test_assert(
+        isset($connected_site['connection']['connected'], $connected_site['connection']['environment']) &&
+        true === $connected_site['connection']['connected'] &&
+        'integration' === $connected_site['connection']['environment'],
+        'Hosted ServiceTitan connection status was not cached after save.'
+    );
     st_test_assert(! is_wp_error($service_client->status()), 'Hosted entitlement refresh failed.');
     $cached_site = get_option('st_sync_site', []);
+    st_test_assert(
+        isset($cached_site['connection']['connected'], $cached_site['connection']['tenant_id']) &&
+        true === $cached_site['connection']['connected'] &&
+        '123456' === $cached_site['connection']['tenant_id'],
+        'Hosted ServiceTitan connection status was not refreshed locally.'
+    );
     st_test_assert(
         isset($cached_site['sync']['last_sync_status'], $cached_site['sync']['last_sync_stats']['failed']) &&
         'failed' === $cached_site['sync']['last_sync_status'] &&
@@ -569,8 +593,10 @@ try {
         $settings_html = (string) ob_get_clean();
         st_test_assert(
             false !== strpos($settings_html, 'Sync health') &&
+            false !== strpos($settings_html, 'ServiceTitan connection') &&
+            false !== strpos($settings_html, 'Connected') &&
             false !== strpos($settings_html, 'Delivery refused by WordPress'),
-            'Hosted sync health was not rendered in the admin settings page.'
+            'Hosted connection and sync health were not rendered in the admin settings page.'
         );
     }
     st_test_assert(! is_wp_error($service_client->update_policy(class_exists('ST_Sync_Admin') ? ST_Sync_Admin::defaults() : [])), 'Hosted policy update failed.');

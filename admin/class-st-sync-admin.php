@@ -211,7 +211,7 @@ class ST_Sync_Admin
                 </form>
             <?php else : ?>
                 <?php $this->render_subscription_status($site, $entitlement); ?>
-                <?php $this->render_connection_form(); ?>
+                <?php $this->render_connection_form(is_array($site['connection'] ?? null) ? $site['connection'] : []); ?>
 
                 <form action="options.php" method="post">
                     <?php
@@ -664,10 +664,33 @@ class ST_Sync_Admin
         <?php
     }
 
-    private function render_connection_form(): void
+    private function render_connection_form(array $connection): void
     {
+        $connected = ! empty($connection['connected']);
         ?>
         <h2><?php esc_html_e('ServiceTitan connection', 'service-titan-job-post'); ?></h2>
+        <table class="widefat striped" style="max-width: 720px">
+            <tbody>
+                <tr>
+                    <th><?php esc_html_e('Connection status', 'service-titan-job-post'); ?></th>
+                    <td><?php echo esc_html($connected ? __('Connected', 'service-titan-job-post') : __('Not connected', 'service-titan-job-post')); ?></td>
+                </tr>
+                <?php if ($connected) : ?>
+                    <tr>
+                        <th><?php esc_html_e('Tenant ID', 'service-titan-job-post'); ?></th>
+                        <td><?php echo esc_html((string) ($connection['tenant_id'] ?? '')); ?></td>
+                    </tr>
+                    <tr>
+                        <th><?php esc_html_e('Environment', 'service-titan-job-post'); ?></th>
+                        <td><?php echo esc_html((string) ($connection['environment'] ?? '')); ?></td>
+                    </tr>
+                    <tr>
+                        <th><?php esc_html_e('Last saved', 'service-titan-job-post'); ?></th>
+                        <td><?php echo esc_html((string) ($connection['updated_at'] ?? '')); ?></td>
+                    </tr>
+                <?php endif; ?>
+            </tbody>
+        </table>
         <p><?php esc_html_e('Credentials are sent over HTTPS to encrypted hosted storage and are not saved in WordPress.', 'service-titan-job-post'); ?></p>
         <form action="<?php echo esc_url(admin_url('admin-post.php')); ?>" method="post" autocomplete="off">
             <input type="hidden" name="action" value="st_sync_connect">

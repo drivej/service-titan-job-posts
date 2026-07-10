@@ -343,6 +343,12 @@ test('stores ServiceTitan credentials encrypted and returns claims only to the w
       last_sync_error: '',
       last_sync_stats: {}
     });
+    assert.deepEqual(status.json.connection, {
+      connected: false,
+      tenant_id: '',
+      environment: '',
+      updated_at: null
+    });
 
     const connection = await request('/v1/connections/servicetitan', {
       method: 'PUT',
@@ -355,6 +361,21 @@ test('stores ServiceTitan credentials encrypted and returns claims only to the w
       }
     });
     assert.equal(connection.response.status, 200);
+    assert.deepEqual(connection.json, {
+      connected: true,
+      tenant_id: '123456',
+      environment: 'integration',
+      updated_at: '2026-07-07T12:00:00.000Z'
+    });
+
+    const connectedStatus = await request('/v1/licenses/status', { headers: auth });
+    assert.equal(connectedStatus.response.status, 200);
+    assert.deepEqual(connectedStatus.json.connection, {
+      connected: true,
+      tenant_id: '123456',
+      environment: 'integration',
+      updated_at: '2026-07-07T12:00:00.000Z'
+    });
 
     const policy = await request('/v1/sites/policy', {
       method: 'PUT',

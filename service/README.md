@@ -40,9 +40,9 @@ Billing endpoints:
 Plugin-facing endpoints:
 
 - `POST /v1/licenses/activate`
-- `GET /v1/licenses/status` returns entitlement plus hosted sync health:
-  last successful sync, last attempt, last status, last error, and last run
-  totals.
+- `GET /v1/licenses/status` returns entitlement, safe ServiceTitan connection
+  status, and hosted sync health: last successful sync, last attempt, last
+  status, last error, and last run totals.
 - `DELETE /v1/licenses/activation`
 - `PUT /v1/connections/servicetitan`
 - `PUT /v1/sites/policy`

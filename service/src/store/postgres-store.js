@@ -258,8 +258,13 @@ class PostgresStore {
       'SELECT * FROM subscriptions WHERE account_id = $1',
       [site.account_id]
     ));
+    const connection = row(await this.db.query(
+      'SELECT tenant_id, environment, updated_at FROM servicetitan_connections WHERE site_id = $1',
+      [site.id]
+    ));
     return {
       site,
+      connection,
       entitlement: buildEntitlement(subscription, context.priceMap, context.now)
     };
   }

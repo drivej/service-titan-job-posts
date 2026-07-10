@@ -94,6 +94,7 @@ class ST_Sync_Service_Client
 
         $site = $this->site();
         $site['entitlement'] = $this->sanitize_entitlement((array) ($response['entitlement'] ?? []));
+        $site['connection'] = $this->sanitize_connection_status((array) ($response['connection'] ?? []));
         $site['sync'] = $this->sanitize_sync_status((array) ($response['sync'] ?? []));
         $site['checked_at'] = time();
         update_option('st_sync_site', $site, false);
@@ -109,7 +110,7 @@ class ST_Sync_Service_Client
      */
     public function connect_servicetitan(array $connection)
     {
-        return $this->request('PUT', '/v1/connections/servicetitan', [
+        $response = $this->request('PUT', '/v1/connections/servicetitan', [
             'tenant_id'    => preg_replace('/\D+/', '', (string) ($connection['tenant_id'] ?? '')),
             'client_id'    => $this->credential_text($connection['client_id'] ?? ''),
             'client_secret'=> $this->credential_text($connection['client_secret'] ?? ''),
@@ -117,6 +118,13 @@ class ST_Sync_Service_Client
                 ? $connection['environment']
                 : 'production',
         ], true);
+        if (! is_wp_error($response)) {
+            $site = $this->site();
+            $site['connection'] = $this->sanitize_connection_status((array) $response);
+            update_option('st_sync_site', $site, false);
+        }
+
+        return $response;
     }
 
     /**
@@ -254,6 +262,18 @@ class ST_Sync_Service_Client
             'status'             => sanitize_key((string) ($entitlement['status'] ?? 'unknown')),
             'plan'               => sanitize_key((string) ($entitlement['plan'] ?? '')),
             'current_period_end' => sanitize_text_field((string) ($entitlement['current_period_end'] ?? '')),
+        ];
+    }
+
+    private function sanitize_connection_status(array $connection): array
+    {
+        return [
+            'connected'   => ! empty($connection['connected']),
+            'tenant_id'   => preg_replace('/\D+/', '', (string) ($connection['tenant_id'] ?? '')),
+            'environment' => in_array(($connection['environment'] ?? ''), ['production', 'integration'], true)
+                ? (string) $connection['environment']
+                : '',
+            'updated_at'  => sanitize_text_field((string) ($connection['updated_at'] ?? '')),
         ];
     }
 

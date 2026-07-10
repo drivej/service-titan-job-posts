@@ -206,8 +206,14 @@ class MemoryStore {
     }
 
     const subscription = this.subscriptions.get(site.account_id);
+    const connection = this.connections.get(site.id);
     return {
       site: clone(site),
+      connection: connection ? clone({
+        tenant_id: connection.tenant_id,
+        environment: connection.environment,
+        updated_at: connection.updated_at || ''
+      }) : null,
       entitlement: buildEntitlement(subscription, context.priceMap, context.now || new Date())
     };
   }

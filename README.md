@@ -127,6 +127,9 @@ worker sync claims. Existing WordPress job posts are not gated by entitlement an
 remain on the customer's site.
 The plugin admin also reads hosted sync health from the service, including the
 last successful run, last attempt, run status, totals, and latest error.
+It also displays whether ServiceTitan credentials have been connected in the
+hosted service, without ever storing the ServiceTitan client secret in
+WordPress.
 
 ```bash
 cd service
