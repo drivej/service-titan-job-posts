@@ -161,10 +161,10 @@ test('unknown trades are quarantined unless an explicit fallback is configured',
 });
 
 test('summary removes known private contact and address details', () => {
-  const source = 'Customer: Jane Customer at 10 Main Street, Unit 2. Call 973-555-1212 or jane@example.com.';
+  const source = 'Jane Customer said the issue returned at 10 Main St., Unit #2. Call 9735551212 or jane@example.com.';
   const redacted = redactSensitiveDetails(source, location);
 
-  assert.doesNotMatch(redacted, /Jane Customer|10 Main Street|Unit 2|973-555-1212|jane@example.com/i);
+  assert.doesNotMatch(redacted, /Jane Customer|10 Main St|Unit #2|9735551212|jane@example.com/i);
   assert.match(redacted, /removed/);
 });
 

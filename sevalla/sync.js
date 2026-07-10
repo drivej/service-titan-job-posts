@@ -70,18 +70,73 @@ function escapeRegExp(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function addressStreetAliases(value) {
+  const street = cleanText(value);
+  if (!street) return [];
+
+  const aliases = new Set([street]);
+  const suffixes = [
+    ['Street', 'St'],
+    ['Avenue', 'Ave'],
+    ['Road', 'Rd'],
+    ['Drive', 'Dr'],
+    ['Lane', 'Ln'],
+    ['Boulevard', 'Blvd'],
+    ['Court', 'Ct'],
+    ['Circle', 'Cir'],
+    ['Place', 'Pl'],
+    ['Terrace', 'Ter'],
+    ['Parkway', 'Pkwy'],
+    ['Highway', 'Hwy']
+  ];
+
+  for (const [longSuffix, shortSuffix] of suffixes) {
+    const longPattern = new RegExp(`\\b${longSuffix}\\b`, 'i');
+    if (longPattern.test(street)) {
+      const shortAlias = street.replace(longPattern, shortSuffix);
+      aliases.add(shortAlias);
+      aliases.add(`${shortAlias}.`);
+    }
+
+    const shortPattern = new RegExp(`\\b${shortSuffix}\\.?\\b`, 'i');
+    if (shortPattern.test(street)) {
+      aliases.add(street.replace(shortPattern, longSuffix));
+    }
+  }
+
+  return [...aliases];
+}
+
+function unitAliases(value) {
+  const unit = cleanText(value);
+  if (!unit) return [];
+
+  const aliases = new Set([unit]);
+  const match = unit.match(/^(?:unit|apt|apartment|suite|ste)\s*#?\s*(.+)$/i);
+  if (match && match[1]) {
+    const number = match[1].trim();
+    for (const prefix of ['Unit', 'Apt', 'Apartment', 'Suite', 'Ste']) {
+      aliases.add(`${prefix} ${number}`);
+      aliases.add(`${prefix} #${number}`);
+    }
+    aliases.add(`#${number}`);
+  }
+
+  return [...aliases];
+}
+
 function redactSensitiveDetails(value, location = {}) {
   let text = cleanText(value)
     .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[contact removed]')
     .replace(/\b(?:https?:\/\/|www\.)\S+\b/gi, '[link removed]')
-    .replace(/(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}\b/g, '[phone removed]')
+    .replace(/(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}\b/g, '[phone removed]')
     .replace(/\b(?:customer|homeowner|client)\s*:\s*[A-Z][A-Za-z'.-]+(?:\s+[A-Z][A-Za-z'.-]+){0,2}\b/g, 'customer');
 
   const address = location.address || {};
   const exactValues = [
     location.name,
-    address.street,
-    address.unit,
+    ...addressStreetAliases(address.street),
+    ...unitAliases(address.unit),
     address.zip
   ]
     .map((item) => cleanText(item))
