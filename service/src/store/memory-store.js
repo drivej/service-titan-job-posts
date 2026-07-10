@@ -3,7 +3,7 @@
 const { decryptText, encryptText, licenseHash, randomSecret, sha256Hex } = require('../crypto');
 const { buildEntitlement } = require('../entitlements');
 const { serviceError } = require('../errors');
-const { syncWindowForSite } = require('./sync-window');
+const { SYNC_CLAIM_LEASE_MS, syncWindowForSite } = require('./sync-window');
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -11,6 +11,21 @@ function clone(value) {
 
 function nowIso(now) {
   return now instanceof Date ? now.toISOString() : new Date(now).toISOString();
+}
+
+function isSyncClaimLeased(site, now) {
+  const claimedUntil = Date.parse(String(site.sync_claimed_until || ''));
+  return Number.isFinite(claimedUntil) && claimedUntil > now.getTime();
+}
+
+function shouldReleaseSyncClaim(site, claimId) {
+  return !claimId || !site.sync_claim_id || site.sync_claim_id === claimId;
+}
+
+function isNewerCursor(currentCursor, processedUntil) {
+  const current = Date.parse(String(currentCursor || ''));
+  const next = processedUntil instanceof Date ? processedUntil.getTime() : Date.parse(String(processedUntil || ''));
+  return Number.isFinite(next) && (!Number.isFinite(current) || next > current);
 }
 
 class MemoryStore {
@@ -95,6 +110,8 @@ class MemoryStore {
       last_sync_status: site && site.last_sync_status ? site.last_sync_status : null,
       last_sync_error: site && site.last_sync_error ? site.last_sync_error : '',
       last_sync_stats: site && site.last_sync_stats ? clone(site.last_sync_stats) : {},
+      sync_claim_id: site && site.sync_claim_id ? site.sync_claim_id : null,
+      sync_claimed_until: site && site.sync_claimed_until ? site.sync_claimed_until : null,
       created_at: site && site.created_at ? site.created_at : nowIso(now),
       updated_at: nowIso(now),
       revoked_at: null
@@ -234,9 +251,10 @@ class MemoryStore {
 
   async listEligibleSyncClaims(context) {
     const claims = [];
-    const now = context.now || new Date();
+    const now = context.now instanceof Date ? context.now : new Date(context.now || Date.now());
     for (const site of this.sites.values()) {
       if (site.revoked_at) continue;
+      if (isSyncClaimLeased(site, now)) continue;
 
       const subscription = this.subscriptions.get(site.account_id);
       const entitlement = buildEntitlement(subscription, context.priceMap, now);
@@ -245,9 +263,17 @@ class MemoryStore {
       const connection = this.connections.get(site.id);
       if (!connection) continue;
       const window = syncWindowForSite(site, context);
+      const claimId = randomSecret('claim', 16);
+      const claimedUntil = new Date(now.getTime() + SYNC_CLAIM_LEASE_MS).toISOString();
+
+      site.sync_claim_id = claimId;
+      site.sync_claimed_until = claimedUntil;
+      site.updated_at = nowIso(now);
 
       claims.push({
         site_id: site.id,
+        claim_id: claimId,
+        sync_claimed_until: claimedUntil,
         site_url: site.site_url,
         delivery_url: site.delivery_url,
         modified_on_or_after: window.modified_on_or_after,
@@ -277,8 +303,12 @@ class MemoryStore {
     site.last_sync_status = input.status;
     site.last_sync_error = input.status === 'failed' ? String(input.error || '').slice(0, 2000) : '';
     site.last_sync_stats = clone(input.stats || {});
-    if (input.status === 'success') {
+    if (input.status === 'success' && isNewerCursor(site.last_successful_sync_at, input.processed_until)) {
       site.last_successful_sync_at = nowIso(input.processed_until);
+    }
+    if (shouldReleaseSyncClaim(site, input.claim_id)) {
+      site.sync_claim_id = null;
+      site.sync_claimed_until = null;
     }
     site.updated_at = nowIso(now);
 

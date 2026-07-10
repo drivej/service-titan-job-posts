@@ -111,7 +111,9 @@ credentials and WordPress delivery signing secrets, validates Stripe webhook
 signatures, and returns only eligible sites to the worker.
 It also owns each site's sync cursor: the first hosted claim uses the configured
 initial backfill date, and later claims resume from the last successful worker
-run with a small overlap for safety.
+run with a small overlap for safety. Claims are leased for a short window so
+two scheduled worker instances do not process the same customer site at the
+same time; the worker releases that lease when it reports the run result.
 
 Checkout creates a Stripe subscription session and returns a one-time license
 key, but that key cannot activate a WordPress site until a signed Stripe webhook
@@ -163,6 +165,8 @@ are never fetched from a customer-editable PHP endpoint. WordPress accepts jobs
 only when their exact JSON body is signed with the provisioned per-site secret.
 The hosted service supplies the ServiceTitan modified-date window for each
 eligible site and advances it only after the worker reports a successful run.
+Successful reports are monotonic, so a delayed worker cannot move a site's
+cursor backward.
 
 Install and run:
 

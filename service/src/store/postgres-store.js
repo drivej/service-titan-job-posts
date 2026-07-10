@@ -3,9 +3,9 @@
 const { decryptText, encryptText, licenseHash, randomSecret, sha256Hex } = require('../crypto');
 const { buildEntitlement } = require('../entitlements');
 const { serviceError } = require('../errors');
-const { syncWindowForSite } = require('./sync-window');
+const { SYNC_CLAIM_LEASE_MS, syncWindowForSite } = require('./sync-window');
 
-const LATEST_MIGRATION = '002_sync_state.sql';
+const LATEST_MIGRATION = '003_sync_claim_leases.sql';
 
 function row(result) {
   return result.rows && result.rows.length > 0 ? result.rows[0] : null;
@@ -323,51 +323,72 @@ class PostgresStore {
   }
 
   async listEligibleSyncClaims(context) {
-    const result = await this.db.query(
-      `SELECT
-         s.*,
-         sub.status,
-         sub.price_id,
-         sub.current_period_end,
-         c.tenant_id,
-         c.environment,
-         c.client_id_encrypted,
-         c.client_secret_encrypted
-       FROM sites s
-       INNER JOIN servicetitan_connections c ON c.site_id = s.id
-       LEFT JOIN subscriptions sub ON sub.account_id = s.account_id
-       WHERE s.revoked_at IS NULL`
-    );
+    const now = context.now || new Date();
+    const nowDate = now instanceof Date ? now : new Date(now);
 
-    const claims = [];
-    for (const record of rows(result)) {
-      const entitlement = buildEntitlement({
-        status: record.status,
-        price_id: record.price_id,
-        current_period_end: record.current_period_end
-      }, context.priceMap, context.now);
-      if (!entitlement.eligible) continue;
-      const window = syncWindowForSite(record, context);
+    return this.withTransaction(async (client) => {
+      const result = await client.query(
+        `SELECT
+           s.*,
+           sub.status,
+           sub.price_id,
+           sub.current_period_end,
+           c.tenant_id,
+           c.environment,
+           c.client_id_encrypted,
+           c.client_secret_encrypted
+         FROM sites s
+         INNER JOIN servicetitan_connections c ON c.site_id = s.id
+         LEFT JOIN subscriptions sub ON sub.account_id = s.account_id
+         WHERE s.revoked_at IS NULL
+           AND (s.sync_claimed_until IS NULL OR s.sync_claimed_until <= $1)
+         FOR UPDATE OF s SKIP LOCKED`,
+        [nowDate]
+      );
 
-      claims.push({
-        site_id: record.id,
-        site_url: record.site_url,
-        delivery_url: record.delivery_url,
-        modified_on_or_after: window.modified_on_or_after,
-        modified_before: window.modified_before,
-        entitlement,
-        policy: record.policy || {},
-        signing_secret: decryptText(record.signing_secret_encrypted, context.encryptionKey),
-        service_titan: {
-          tenant_id: record.tenant_id,
-          environment: record.environment,
-          client_id: decryptText(record.client_id_encrypted, context.encryptionKey),
-          client_secret: decryptText(record.client_secret_encrypted, context.encryptionKey)
-        }
-      });
-    }
+      const claims = [];
+      for (const record of rows(result)) {
+        const entitlement = buildEntitlement({
+          status: record.status,
+          price_id: record.price_id,
+          current_period_end: record.current_period_end
+        }, context.priceMap, nowDate);
+        if (!entitlement.eligible) continue;
+        const window = syncWindowForSite(record, { ...context, now: nowDate });
+        const claimId = randomSecret('claim', 16);
+        const claimedUntil = new Date(nowDate.getTime() + SYNC_CLAIM_LEASE_MS);
 
-    return claims;
+        await client.query(
+          `UPDATE sites
+              SET sync_claim_id = $2,
+                  sync_claimed_until = $3,
+                  updated_at = $4
+            WHERE id = $1`,
+          [record.id, claimId, claimedUntil, nowDate]
+        );
+
+        claims.push({
+          site_id: record.id,
+          claim_id: claimId,
+          sync_claimed_until: claimedUntil.toISOString(),
+          site_url: record.site_url,
+          delivery_url: record.delivery_url,
+          modified_on_or_after: window.modified_on_or_after,
+          modified_before: window.modified_before,
+          entitlement,
+          policy: record.policy || {},
+          signing_secret: decryptText(record.signing_secret_encrypted, context.encryptionKey),
+          service_titan: {
+            tenant_id: record.tenant_id,
+            environment: record.environment,
+            client_id: decryptText(record.client_id_encrypted, context.encryptionKey),
+            client_secret: decryptText(record.client_secret_encrypted, context.encryptionKey)
+          }
+        });
+      }
+
+      return claims;
+    });
   }
 
   async recordSyncRun(input, context) {
@@ -380,8 +401,18 @@ class PostgresStore {
               last_sync_error = $4,
               last_sync_stats = $5::jsonb,
               last_successful_sync_at = CASE
-                WHEN $3 = 'success' THEN $6::timestamptz
+                WHEN $3 = 'success'
+                 AND (last_successful_sync_at IS NULL OR $6::timestamptz > last_successful_sync_at)
+                THEN $6::timestamptz
                 ELSE last_successful_sync_at
+              END,
+              sync_claim_id = CASE
+                WHEN $7 = '' OR sync_claim_id IS NULL OR sync_claim_id = $7 THEN NULL
+                ELSE sync_claim_id
+              END,
+              sync_claimed_until = CASE
+                WHEN $7 = '' OR sync_claim_id IS NULL OR sync_claim_id = $7 THEN NULL
+                ELSE sync_claimed_until
               END,
               updated_at = $2
         WHERE id = $1 AND revoked_at IS NULL
@@ -393,7 +424,8 @@ class PostgresStore {
         input.status,
         input.status === 'failed' ? String(input.error || '').slice(0, 2000) : '',
         JSON.stringify(stats),
-        input.status === 'success' ? input.processed_until : null
+        input.status === 'success' ? input.processed_until : null,
+        input.claim_id || ''
       ]
     ));
     if (!site) {

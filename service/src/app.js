@@ -204,6 +204,7 @@ function sanitizeSyncRun(input) {
 
   return {
     site_id: siteId,
+    claim_id: String(input.claim_id || '').trim().slice(0, 120),
     status,
     processed_until: processedUntil,
     stats: sanitizeSyncStats(input.stats),

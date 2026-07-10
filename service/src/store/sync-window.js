@@ -1,6 +1,7 @@
 'use strict';
 
 const SYNC_CURSOR_OVERLAP_MS = 10 * 60 * 1000;
+const SYNC_CLAIM_LEASE_MS = 30 * 60 * 1000;
 
 function dateTime(value) {
   if (value instanceof Date) return value.getTime();
@@ -36,6 +37,7 @@ function syncWindowForSite(site = {}, context = {}) {
 }
 
 module.exports = {
+  SYNC_CLAIM_LEASE_MS,
   SYNC_CURSOR_OVERLAP_MS,
   normalizeSinceDate,
   syncWindowForSite

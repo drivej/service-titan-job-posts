@@ -378,6 +378,8 @@ test('stores ServiceTitan credentials encrypted and returns claims only to the w
     });
     assert.equal(claims.response.status, 200);
     assert.equal(claims.json.sites.length, 1);
+    assert.match(claims.json.sites[0].claim_id, /^claim_/);
+    assert.equal(claims.json.sites[0].sync_claimed_until, '2026-07-07T12:30:00.000Z');
     assert.equal(claims.json.sites[0].service_titan.client_secret, 'st_secret');
     assert.equal(claims.json.sites[0].policy.min_price, '500');
     assert.equal(claims.json.sites[0].signing_secret, activation.signing_secret);
@@ -414,17 +416,29 @@ test('sync claims use policy backfill first, then successful runs advance the cu
       headers: { Authorization: 'Bearer worker-secret' },
       body: {}
     });
+    const initialClaim = initialClaims.json.sites[0];
     assert.equal(initialClaims.response.status, 200);
-    assert.equal(initialClaims.json.sites[0].modified_on_or_after, '2026-07-01T00:00:00Z');
-    assert.equal(initialClaims.json.sites[0].modified_before, '2026-07-07T12:00:00.000Z');
+    assert.match(initialClaim.claim_id, /^claim_/);
+    assert.equal(initialClaim.sync_claimed_until, '2026-07-07T12:30:00.000Z');
+    assert.equal(initialClaim.modified_on_or_after, '2026-07-01T00:00:00Z');
+    assert.equal(initialClaim.modified_before, '2026-07-07T12:00:00.000Z');
+
+    const duplicateClaims = await request('/internal/v1/sync/claims', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer worker-secret' },
+      body: {}
+    });
+    assert.equal(duplicateClaims.response.status, 200);
+    assert.deepEqual(duplicateClaims.json.sites, []);
 
     const unauthorizedRun = await request('/internal/v1/sync/runs', {
       method: 'POST',
       headers: { Authorization: 'Bearer wrong' },
       body: {
         site_id: activation.site_id,
+        claim_id: initialClaim.claim_id,
         status: 'success',
-        processed_until: initialClaims.json.sites[0].modified_before
+        processed_until: initialClaim.modified_before
       }
     });
     assert.equal(unauthorizedRun.response.status, 401);
@@ -434,8 +448,9 @@ test('sync claims use policy backfill first, then successful runs advance the cu
       headers: { Authorization: 'Bearer worker-secret' },
       body: {
         site_id: activation.site_id,
+        claim_id: initialClaim.claim_id,
         status: 'success',
-        processed_until: initialClaims.json.sites[0].modified_before,
+        processed_until: initialClaim.modified_before,
         stats: {
           imported: 2,
           filtered: 3,
@@ -453,13 +468,29 @@ test('sync claims use policy backfill first, then successful runs advance the cu
       headers: { Authorization: 'Bearer worker-secret' },
       body: {}
     });
-    assert.equal(advancedClaims.json.sites[0].modified_on_or_after, '2026-07-07T11:50:00.000Z');
+    const advancedClaim = advancedClaims.json.sites[0];
+    assert.notEqual(advancedClaim.claim_id, initialClaim.claim_id);
+    assert.equal(advancedClaim.modified_on_or_after, '2026-07-07T11:50:00.000Z');
+
+    const staleSuccessRun = await request('/internal/v1/sync/runs', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer worker-secret' },
+      body: {
+        site_id: activation.site_id,
+        claim_id: 'claim_stale',
+        status: 'success',
+        processed_until: '2026-07-01T00:00:00.000Z'
+      }
+    });
+    assert.equal(staleSuccessRun.response.status, 200);
+    assert.equal(staleSuccessRun.json.last_successful_sync_at, '2026-07-07T12:00:00.000Z');
 
     const failedRun = await request('/internal/v1/sync/runs', {
       method: 'POST',
       headers: { Authorization: 'Bearer worker-secret' },
       body: {
         site_id: activation.site_id,
+        claim_id: advancedClaim.claim_id,
         status: 'failed',
         processed_until: '2026-07-07T12:30:00.000Z',
         error: 'delivery failed',

@@ -17,6 +17,8 @@ WordPress whether a subscription is valid.
   `POST /internal/v1/sync/claims`.
 - Track each site's successful sync cursor in the hosted service so daily runs
   resume from the last fully processed ServiceTitan modification window.
+- Lease claimed sites for 30 minutes so overlapping worker processes do not
+  duplicate ServiceTitan API work for the same customer site.
 - Validate Stripe webhook signatures from the raw request body before updating
   subscription state.
 
@@ -46,9 +48,14 @@ Plugin-facing endpoints:
 Worker-facing endpoint:
 
 - `POST /internal/v1/sync/claims` with `Authorization: Bearer <WORKER_API_KEY>`
+  returns eligible sites with a `claim_id` and `sync_claimed_until` lease. A
+  currently leased site is omitted until the lease expires or the worker reports
+  a run result.
 - `POST /internal/v1/sync/runs` with `Authorization: Bearer <WORKER_API_KEY>`
-  records a site's sync result. Successful runs advance the site's cursor;
-  failed runs preserve the previous cursor for a safe retry.
+  records a site's sync result. The worker should echo the `claim_id` it
+  received. Successful runs advance the site's cursor monotonically; failed
+  runs preserve the previous cursor for a safe retry. Matching run reports
+  release the active lease.
 
 Stripe endpoint:
 

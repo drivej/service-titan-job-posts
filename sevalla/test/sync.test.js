@@ -337,6 +337,7 @@ test('hosted claim sync uses service-issued entitlement, credentials, policy, an
 test('hosted claim sync reports successful run windows without requiring HTTP in injected-claim tests', async () => {
   const claim = {
     site_id: 'site_reported',
+    claim_id: 'claim_reported',
     delivery_url: 'https://client.example/wp-json/st-sync/v1/jobs',
     signing_secret: 'site-secret',
     policy: settings,
@@ -373,6 +374,7 @@ test('hosted claim sync reports successful run windows without requiring HTTP in
   assert.equal(result.imported, 1);
   assert.equal(reports.length, 1);
   assert.equal(reports[0][1], 'site_reported');
+  assert.equal(reports[0][0].claim_id, 'claim_reported');
   assert.equal(reports[0][0].status, 'success');
   assert.equal(reports[0][0].processed_until, claim.modified_before);
   assert.equal(reports[0][0].stats.imported, 1);
@@ -381,6 +383,7 @@ test('hosted claim sync reports successful run windows without requiring HTTP in
 test('hosted claim sync isolates one site failure from other eligible sites', async () => {
   const goodClaim = {
     site_id: 'site_good',
+    claim_id: 'claim_good',
     delivery_url: 'https://client.example/wp-json/st-sync/v1/jobs',
     signing_secret: 'site-secret',
     policy: settings,
@@ -400,7 +403,7 @@ test('hosted claim sync isolates one site failure from other eligible sites', as
   const reports = [];
 
   const result = await syncClaimedSites({
-    claims: [{ site_id: 'site_bad' }, goodClaim],
+    claims: [{ site_id: 'site_bad', claim_id: 'claim_bad' }, goodClaim],
     source,
     quiet: true,
     reportRun(body) {
@@ -424,4 +427,5 @@ test('hosted claim sync isolates one site failure from other eligible sites', as
   assert.equal(result.failed, 1);
   assert.equal(posted.length, 1);
   assert.deepEqual(reports.map((report) => report.status), ['failed', 'success']);
+  assert.deepEqual(reports.map((report) => report.claim_id), ['claim_bad', 'claim_good']);
 });

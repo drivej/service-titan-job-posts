@@ -517,6 +517,7 @@ function settingsFromClaim(claim) {
 async function reportSyncRun(config = {}, claim = {}, result = {}, status = 'success', error = null) {
   const body = {
     site_id: claim.site_id,
+    claim_id: claim.claim_id || '',
     status,
     processed_until: claim.modified_before || new Date().toISOString(),
     stats: result,
