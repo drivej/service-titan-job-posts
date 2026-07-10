@@ -183,6 +183,22 @@ function sanitizeSyncStats(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+function isoStringOrNull(value) {
+  if (!value) return null;
+  const parsed = value instanceof Date ? value : new Date(String(value));
+  return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : null;
+}
+
+function syncStatusForSite(site) {
+  return {
+    last_successful_sync_at: isoStringOrNull(site.last_successful_sync_at),
+    last_sync_attempt_at: isoStringOrNull(site.last_sync_attempt_at),
+    last_sync_status: String(site.last_sync_status || ''),
+    last_sync_error: String(site.last_sync_error || ''),
+    last_sync_stats: sanitizeSyncStats(site.last_sync_stats)
+  };
+}
+
 function sanitizeSyncRun(input) {
   const siteId = String(input.site_id || '').trim();
   const status = String(input.status || '').trim().toLowerCase();
@@ -381,7 +397,8 @@ async function handleRoute(request, rawBody, body, dependencies) {
       payload: {
         site_id: site.id,
         site_url: site.site_url,
-        entitlement
+        entitlement,
+        sync: syncStatusForSite(site)
       }
     };
   }

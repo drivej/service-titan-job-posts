@@ -94,6 +94,7 @@ class ST_Sync_Service_Client
 
         $site = $this->site();
         $site['entitlement'] = $this->sanitize_entitlement((array) ($response['entitlement'] ?? []));
+        $site['sync'] = $this->sanitize_sync_status((array) ($response['sync'] ?? []));
         $site['checked_at'] = time();
         update_option('st_sync_site', $site, false);
 
@@ -254,6 +255,40 @@ class ST_Sync_Service_Client
             'plan'               => sanitize_key((string) ($entitlement['plan'] ?? '')),
             'current_period_end' => sanitize_text_field((string) ($entitlement['current_period_end'] ?? '')),
         ];
+    }
+
+    private function sanitize_sync_status(array $sync): array
+    {
+        return [
+            'last_successful_sync_at' => sanitize_text_field((string) ($sync['last_successful_sync_at'] ?? '')),
+            'last_sync_attempt_at'    => sanitize_text_field((string) ($sync['last_sync_attempt_at'] ?? '')),
+            'last_sync_status'        => sanitize_key((string) ($sync['last_sync_status'] ?? '')),
+            'last_sync_error'         => sanitize_textarea_field((string) ($sync['last_sync_error'] ?? '')),
+            'last_sync_stats'         => $this->sanitize_sync_stats((array) ($sync['last_sync_stats'] ?? [])),
+        ];
+    }
+
+    private function sanitize_sync_stats(array $stats): array
+    {
+        $clean = [];
+        foreach ($stats as $key => $value) {
+            $safe_key = sanitize_key((string) $key);
+            if ('' === $safe_key) {
+                continue;
+            }
+
+            if (is_array($value)) {
+                $clean[$safe_key] = $this->sanitize_sync_stats($value);
+            } elseif (is_bool($value)) {
+                $clean[$safe_key] = $value;
+            } elseif (is_numeric($value)) {
+                $clean[$safe_key] = 0 + $value;
+            } else {
+                $clean[$safe_key] = sanitize_text_field((string) $value);
+            }
+        }
+
+        return $clean;
     }
 
     private function local_policy(): array

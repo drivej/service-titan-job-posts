@@ -614,6 +614,53 @@ class ST_Sync_Admin
             <?php wp_nonce_field('st_sync_billing_portal'); ?>
             <?php submit_button(__('Manage billing', 'service-titan-job-post'), 'secondary'); ?>
         </form>
+        <?php $this->render_sync_status(is_array($site['sync'] ?? null) ? $site['sync'] : []); ?>
+        <?php
+    }
+
+    private function render_sync_status(array $sync): void
+    {
+        $stats = is_array($sync['last_sync_stats'] ?? null) ? $sync['last_sync_stats'] : [];
+        $summary_parts = [];
+        foreach (['sites', 'imported', 'filtered', 'failed'] as $key) {
+            if (isset($stats[$key]) && is_numeric($stats[$key])) {
+                $summary_parts[] = sprintf(
+                    '%s: %s',
+                    ucfirst($key),
+                    number_format_i18n((float) $stats[$key])
+                );
+            }
+        }
+        $summary = $summary_parts ? implode(', ', $summary_parts) : __('No run totals reported yet.', 'service-titan-job-post');
+        $last_error = trim((string) ($sync['last_sync_error'] ?? ''));
+        ?>
+        <h2><?php esc_html_e('Sync health', 'service-titan-job-post'); ?></h2>
+        <table class="widefat striped" style="max-width: 720px">
+            <tbody>
+                <tr>
+                    <th><?php esc_html_e('Last successful sync', 'service-titan-job-post'); ?></th>
+                    <td><?php echo esc_html((string) ($sync['last_successful_sync_at'] ?? '') ?: __('Never', 'service-titan-job-post')); ?></td>
+                </tr>
+                <tr>
+                    <th><?php esc_html_e('Last attempt', 'service-titan-job-post'); ?></th>
+                    <td><?php echo esc_html((string) ($sync['last_sync_attempt_at'] ?? '') ?: __('Never', 'service-titan-job-post')); ?></td>
+                </tr>
+                <tr>
+                    <th><?php esc_html_e('Last status', 'service-titan-job-post'); ?></th>
+                    <td><?php echo esc_html((string) ($sync['last_sync_status'] ?? '') ?: __('Not yet run', 'service-titan-job-post')); ?></td>
+                </tr>
+                <tr>
+                    <th><?php esc_html_e('Last run totals', 'service-titan-job-post'); ?></th>
+                    <td><?php echo esc_html($summary); ?></td>
+                </tr>
+                <?php if ('' !== $last_error) : ?>
+                    <tr>
+                        <th><?php esc_html_e('Last error', 'service-titan-job-post'); ?></th>
+                        <td><?php echo esc_html($last_error); ?></td>
+                    </tr>
+                <?php endif; ?>
+            </tbody>
+        </table>
         <?php
     }
 

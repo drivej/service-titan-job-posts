@@ -16,7 +16,30 @@ if (! defined('ST_SYNC_SERVICE_URL')) {
     define('ST_SYNC_SERVICE_URL', 'https://subscription-service.example.test');
 }
 
+$st_wp_bootstrapped = false;
+ob_start();
+register_shutdown_function(static function () use (&$st_wp_bootstrapped): void {
+    if ($st_wp_bootstrapped) {
+        return;
+    }
+
+    $bootstrap_output = (string) ob_get_contents();
+    if ('' === trim($bootstrap_output)) {
+        return;
+    }
+
+    ob_end_clean();
+    $message = (string) preg_replace('/<(style|script)\b[^>]*>.*?<\/\1>/is', '', $bootstrap_output);
+    fwrite(STDERR, "WordPress bootstrap failed before integration tests could run:\n");
+    fwrite(STDERR, trim(html_entity_decode(strip_tags($message))) . "\n");
+    exit(2);
+});
 require $wp_root . '/wp-load.php';
+$st_wp_bootstrapped = true;
+$bootstrap_output = (string) ob_get_clean();
+if ('' !== trim($bootstrap_output)) {
+    echo $bootstrap_output;
+}
 
 if (! class_exists('ST_Sync_Sevalla_API')) {
     fwrite(STDERR, "ServiceTitan Local Job Content must be active.\n");
@@ -463,6 +486,18 @@ try {
                     'plan'               => 'monthly',
                     'current_period_end' => '2026-08-01T00:00:00Z',
                 ],
+                'sync' => [
+                    'last_successful_sync_at' => '2026-07-07T12:00:00.000Z',
+                    'last_sync_attempt_at'    => '2026-07-07T12:05:00.000Z',
+                    'last_sync_status'        => 'failed',
+                    'last_sync_error'         => 'Delivery refused by WordPress',
+                    'last_sync_stats'         => [
+                        'sites'    => 1,
+                        'imported' => 2,
+                        'filtered' => 3,
+                        'failed'   => 1,
+                    ],
+                ],
             ];
         } elseif ('/v1/connections/servicetitan' === $path) {
             $payload = ['connected' => true, 'tenant_id' => '123456'];
@@ -521,6 +556,23 @@ try {
     ]);
     st_test_assert(! is_wp_error($connection), 'Hosted ServiceTitan connection failed.');
     st_test_assert(! is_wp_error($service_client->status()), 'Hosted entitlement refresh failed.');
+    $cached_site = get_option('st_sync_site', []);
+    st_test_assert(
+        isset($cached_site['sync']['last_sync_status'], $cached_site['sync']['last_sync_stats']['failed']) &&
+        'failed' === $cached_site['sync']['last_sync_status'] &&
+        1 === (int) $cached_site['sync']['last_sync_stats']['failed'],
+        'Hosted sync health was not cached locally.'
+    );
+    if (class_exists('ST_Sync_Admin')) {
+        ob_start();
+        (new ST_Sync_Admin())->render_settings_page();
+        $settings_html = (string) ob_get_clean();
+        st_test_assert(
+            false !== strpos($settings_html, 'Sync health') &&
+            false !== strpos($settings_html, 'Delivery refused by WordPress'),
+            'Hosted sync health was not rendered in the admin settings page.'
+        );
+    }
     st_test_assert(! is_wp_error($service_client->update_policy(class_exists('ST_Sync_Admin') ? ST_Sync_Admin::defaults() : [])), 'Hosted policy update failed.');
     $portal = $service_client->billing_portal();
     st_test_assert(

@@ -336,6 +336,13 @@ test('stores ServiceTitan credentials encrypted and returns claims only to the w
     const status = await request('/v1/licenses/status', { headers: auth });
     assert.equal(status.response.status, 200);
     assert.equal(status.json.site_url, 'https://example.com');
+    assert.deepEqual(status.json.sync, {
+      last_successful_sync_at: null,
+      last_sync_attempt_at: null,
+      last_sync_status: '',
+      last_sync_error: '',
+      last_sync_stats: {}
+    });
 
     const connection = await request('/v1/connections/servicetitan', {
       method: 'PUT',
@@ -504,6 +511,18 @@ test('sync claims use policy backfill first, then successful runs advance the cu
     assert.equal(failedRun.response.status, 200);
     assert.equal(failedRun.json.last_sync_status, 'failed');
     assert.equal(failedRun.json.last_successful_sync_at, '2026-07-07T12:00:00.000Z');
+
+    const statusAfterFailure = await request('/v1/licenses/status', { headers: auth });
+    assert.equal(statusAfterFailure.response.status, 200);
+    assert.equal(statusAfterFailure.json.sync.last_successful_sync_at, '2026-07-07T12:00:00.000Z');
+    assert.equal(statusAfterFailure.json.sync.last_sync_attempt_at, '2026-07-07T12:00:00.000Z');
+    assert.equal(statusAfterFailure.json.sync.last_sync_status, 'failed');
+    assert.equal(statusAfterFailure.json.sync.last_sync_error, 'delivery failed');
+    assert.deepEqual(statusAfterFailure.json.sync.last_sync_stats, {
+      imported: 0,
+      filtered: 0,
+      failed: 1
+    });
 
     const afterFailureClaims = await request('/internal/v1/sync/claims', {
       method: 'POST',
