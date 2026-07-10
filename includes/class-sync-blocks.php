@@ -130,6 +130,7 @@ class ST_Sync_Blocks
                 $location_name
             );
         }
+        $intro = $this->recent_jobs_intro($attributes, $service_name, $location_name, (int) $query->post_count);
 
         $wrapper_attributes = [
             'class' => 'st-recent-jobs',
@@ -149,6 +150,9 @@ class ST_Sync_Blocks
         ?>
         <section <?php echo $wrapper; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?> aria-labelledby="<?php echo esc_attr($heading_id); ?>">
             <h2 id="<?php echo esc_attr($heading_id); ?>" class="st-recent-jobs__heading"><?php echo esc_html($heading); ?></h2>
+            <?php if ('' !== $intro) : ?>
+                <p class="st-recent-jobs__intro"><?php echo esc_html($intro); ?></p>
+            <?php endif; ?>
             <div class="st-recent-jobs__grid">
                 <?php while ($query->have_posts()) : $query->the_post(); ?>
                     <?php
@@ -184,6 +188,7 @@ class ST_Sync_Blocks
                     '@context' => 'https://schema.org',
                     '@type'    => 'ItemList',
                     'name'     => $heading,
+                    'description' => wp_strip_all_tags($intro),
                     'itemListElement' => $schemas,
                 ]); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
             }
@@ -204,6 +209,7 @@ class ST_Sync_Blocks
             'location_slug'=> '',
             'count'        => '',
             'heading'      => '',
+            'intro'        => '',
         ], is_array($attributes) ? $attributes : [], 'st_recent_jobs');
 
         return $this->render_recent_jobs([
@@ -211,6 +217,7 @@ class ST_Sync_Blocks
             'locationSlug' => $attributes['location_slug'] ?: $attributes['location'],
             'jobsToShow'   => (int) $attributes['count'],
             'heading'      => (string) $attributes['heading'],
+            'intro'        => (string) $attributes['intro'],
         ], '', null);
     }
 
@@ -246,6 +253,32 @@ class ST_Sync_Blocks
         }
 
         return compact('service', 'location');
+    }
+
+    private function recent_jobs_intro(array $attributes, string $service_name, string $location_name, int $job_count): string
+    {
+        $custom = trim((string) ($attributes['intro'] ?? ''));
+        if ('' !== $custom) {
+            return wp_strip_all_tags($custom);
+        }
+
+        if ($job_count <= 0) {
+            return '';
+        }
+
+        $template = _n(
+            'Here is %3$s recent %1$s job completed in %2$s. This reviewed example comes from completed ServiceTitan work orders and technician notes.',
+            'Here are %3$s recent %1$s jobs completed in %2$s. These reviewed examples come from completed ServiceTitan work orders and technician notes.',
+            $job_count,
+            'service-titan-job-post'
+        );
+
+        return sprintf(
+            $template,
+            $service_name,
+            $location_name,
+            number_format_i18n($job_count)
+        );
     }
 
     private function format_date(string $date): string

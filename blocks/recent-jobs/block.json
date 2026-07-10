@@ -22,6 +22,10 @@
     "heading": {
       "type": "string",
       "default": ""
+    },
+    "intro": {
+      "type": "string",
+      "default": ""
     }
   },
   "supports": {

@@ -216,6 +216,11 @@ try {
     $rendered = do_blocks($block);
     st_test_assert(3 === substr_count($rendered, 'st-recent-jobs__card'), 'Location block did not render exactly three jobs.');
     st_test_assert(
+        false !== strpos($rendered, 'st-recent-jobs__intro') &&
+        false !== strpos($rendered, 'recent Plumbing Integration Test jobs completed in Newark Integration Test'),
+        'Location block did not render generated local intro copy.'
+    );
+    st_test_assert(
         false === strpos($rendered, 'Integration job number 1'),
         'Location block did not select the three most recent jobs.'
     );
@@ -227,6 +232,7 @@ try {
     $item_list = $recent_schemas[0] ?? [];
     st_test_assert(
         'ItemList' === ($item_list['@type'] ?? '') &&
+        false !== strpos((string) ($item_list['description'] ?? ''), 'Newark Integration Test') &&
         3 === count($item_list['itemListElement'] ?? []) &&
         'Service' === ($item_list['itemListElement'][0]['item']['@type'] ?? ''),
         'Recent jobs block did not emit Service ItemList JSON-LD.'
@@ -246,14 +252,15 @@ try {
         'An attribute-less block did not inherit the global recent-job count.'
     );
     $shortcode_rendered = do_shortcode(sprintf(
-        '[st_recent_jobs service="%s" location="%s" count="2" heading="Shortcode Jobs"]',
+        '[st_recent_jobs service="%s" location="%s" count="2" heading="Shortcode Jobs" intro="Custom local proof from reviewed jobs."]',
         esc_attr($service_slug),
         esc_attr($location_slug)
     ));
     st_test_assert(
         2 === substr_count($shortcode_rendered, 'st-recent-jobs__card') &&
-        false !== strpos($shortcode_rendered, 'Shortcode Jobs'),
-        'Recent jobs shortcode did not render the requested job cards.'
+        false !== strpos($shortcode_rendered, 'Shortcode Jobs') &&
+        false !== strpos($shortcode_rendered, 'Custom local proof from reviewed jobs.'),
+        'Recent jobs shortcode did not render the requested job cards and custom intro.'
     );
     $shortcode_schemas = st_test_json_ld_scripts($shortcode_rendered);
     st_test_assert(

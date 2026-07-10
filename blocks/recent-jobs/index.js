@@ -1,7 +1,7 @@
 (function (blocks, blockEditor, components, element, i18n, serverSideRender) {
   const { registerBlockType } = blocks;
   const { InspectorControls, useBlockProps } = blockEditor;
-  const { PanelBody, RangeControl, TextControl } = components;
+  const { PanelBody, RangeControl, TextareaControl, TextControl } = components;
   const { createElement: el, Fragment } = element;
   const { __ } = i18n;
   const ServerSideRender = serverSideRender;
@@ -45,6 +45,12 @@
               label: __('Heading', 'service-titan-job-post'),
               value: attributes.heading,
               onChange: function (value) { setAttributes({ heading: value }); }
+            }),
+            el(TextareaControl, {
+              label: __('Intro copy', 'service-titan-job-post'),
+              help: __('Optional. Leave blank to generate local service/city copy from approved jobs.', 'service-titan-job-post'),
+              value: attributes.intro,
+              onChange: function (value) { setAttributes({ intro: value }); }
             })
           )
         ),

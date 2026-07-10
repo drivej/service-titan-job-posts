@@ -34,13 +34,15 @@ Plumbing              /plumbing/
 Add the **Recent Local Jobs** block to the Newark page. With its service and
 location fields blank, the block infers `plumbing` and `newark` from the page
 hierarchy. You can set the slugs explicitly when a site's page structure is
-different.
+different. The block renders a local intro paragraph using the reviewed
+service/city/job count, or you can provide custom intro copy in the block
+settings.
 
 Classic Editor and page-builder sites can use the same renderer with a
 shortcode:
 
 ```text
-[st_recent_jobs service="plumbing" location="newark" count="3"]
+[st_recent_jobs service="plumbing" location="newark" count="3" intro="Recent plumbing work completed by our Newark team."]
 ```
 
 Approved job posts are nested beneath that path:

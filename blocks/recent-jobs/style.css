@@ -1,5 +1,11 @@
 .st-recent-jobs__heading {
-  margin-bottom: 1.25rem;
+  margin-bottom: 0.75rem;
+}
+
+.st-recent-jobs__intro {
+  max-width: 48rem;
+  margin: 0 0 1.25rem;
+  line-height: 1.6;
 }
 
 .st-recent-jobs__grid {
