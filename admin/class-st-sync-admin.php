@@ -211,6 +211,7 @@ class ST_Sync_Admin
                 </form>
             <?php else : ?>
                 <?php $this->render_subscription_status($site, $entitlement); ?>
+                <?php $this->render_editorial_queue_status(); ?>
                 <?php $this->render_connection_form(is_array($site['connection'] ?? null) ? $site['connection'] : []); ?>
 
                 <form action="options.php" method="post">
@@ -662,6 +663,63 @@ class ST_Sync_Admin
             </tbody>
         </table>
         <?php
+    }
+
+    private function render_editorial_queue_status(): void
+    {
+        $counts = wp_count_posts('st_job');
+        $pending_count = isset($counts->pending) ? (int) $counts->pending : 0;
+        $source_update_count = $this->source_update_count();
+        $pending_url = add_query_arg([
+            'post_type'   => 'st_job',
+            'post_status' => 'pending',
+        ], admin_url('edit.php'));
+        $source_update_url = add_query_arg([
+            'post_type'              => 'st_job',
+            'st_sync_source_update'  => 'available',
+        ], admin_url('edit.php'));
+        ?>
+        <h2><?php esc_html_e('Editorial queue', 'service-titan-job-post'); ?></h2>
+        <table class="widefat striped" style="max-width: 720px">
+            <tbody>
+                <tr>
+                    <th><?php esc_html_e('Pending review', 'service-titan-job-post'); ?></th>
+                    <td>
+                        <?php echo esc_html(number_format_i18n($pending_count)); ?>
+                        <a href="<?php echo esc_url($pending_url); ?>"><?php esc_html_e('Review pending jobs', 'service-titan-job-post'); ?></a>
+                    </td>
+                </tr>
+                <tr>
+                    <th><?php esc_html_e('Source updates', 'service-titan-job-post'); ?></th>
+                    <td>
+                        <?php echo esc_html(number_format_i18n($source_update_count)); ?>
+                        <a href="<?php echo esc_url($source_update_url); ?>"><?php esc_html_e('Review source updates', 'service-titan-job-post'); ?></a>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+        <p class="description">
+            <?php esc_html_e('Imported jobs stay pending until an editor reviews and publishes them. Later ServiceTitan changes are held here for review instead of overwriting approved copy.', 'service-titan-job-post'); ?>
+        </p>
+        <?php
+    }
+
+    private function source_update_count(): int
+    {
+        $query = new WP_Query([
+            'post_type'      => 'st_job',
+            'post_status'    => ['publish', 'pending', 'draft', 'private', 'future'],
+            'posts_per_page' => 1,
+            'fields'         => 'ids',
+            'meta_query'     => [
+                [
+                    'key'   => 'st_job_update_available',
+                    'value' => '1',
+                ],
+            ],
+        ]);
+
+        return (int) $query->found_posts;
     }
 
     private function render_connection_form(array $connection): void

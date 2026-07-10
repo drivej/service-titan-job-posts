@@ -206,6 +206,9 @@ should verify:
 The Local Jobs admin list includes completed date, service/location, and source
 update columns. Editors can sort by completed date and filter the list to jobs
 that need ServiceTitan source-update review.
+The Local Jobs Sync settings page also includes an **Editorial queue** panel
+with counts and direct links for pending jobs and source updates that need
+review.
 
 New imports use the **Job Details** block as their default post body. The
 generated summary is stored in the excerpt and job meta, so the block can render
