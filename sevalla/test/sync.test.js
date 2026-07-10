@@ -107,6 +107,13 @@ test('job filtering requires completion, a qualifying total, city, and useful so
     'insufficient-description'
   );
   assert.equal(
+    shouldImportJob({
+      ...job,
+      summaryOfWork: 'Jane Customer 10 Main St Unit #2 9735551212 jane@example.com'
+    }, jobType, location, settings).reason,
+    'insufficient-public-description'
+  );
+  assert.equal(
     shouldImportJob({ ...job, total: 'not-a-total' }, jobType, location, settings).reason,
     'invalid-total'
   );

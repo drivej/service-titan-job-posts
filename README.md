@@ -8,8 +8,9 @@ jobs into privacy-conscious, locally relevant website content.
 1. The worker requests completed ServiceTitan jobs and paginates through every
    result.
 2. It enriches each job with its Job Type and CRM Location.
-3. It filters jobs by price, city, job type, completion state, and verified
-   completion-detail quality.
+3. It filters jobs by price, city, job type, completion state, verified
+   completion-detail quality, and remaining public detail after privacy
+   redaction.
 4. It removes known customer names, exact addresses, email addresses, phone
    numbers, and links from generated copy.
 5. It classifies the job as plumbing, HVAC, electrical, or a configured service.
@@ -103,7 +104,9 @@ Only ServiceTitan **Summary of Work** is treated as completion evidence by
 default. Because that field is not enabled for every account, you can configure
 a vetted technician-completion custom field by name or type ID. Booking
 summaries and Job Type boilerplate are deliberately not converted into public
-claims about completed work.
+claims about completed work. The worker also checks the redacted public text
+against the minimum summary length, so jobs that become mostly private-detail
+placeholders are held back instead of queued for review.
 
 ## Hosted service
 

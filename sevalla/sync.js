@@ -173,6 +173,12 @@ function countWords(value) {
   return matches ? matches.length : 0;
 }
 
+function countPublicWords(value) {
+  return countWords(
+    cleanText(value).replace(/\[(?:contact|link|phone|private detail) removed\]/gi, ' ')
+  );
+}
+
 function resolveService(jobType, settings) {
   const name = cleanText(jobType.name);
   const jobClass = cleanText(jobType.class);
@@ -246,6 +252,9 @@ function shouldImportJob(job, jobType, location, settings) {
   const minimumWords = Math.max(0, Number.parseInt(settings.min_summary_words || 0, 10) || 0);
   if (countWords(source) < minimumWords) {
     return { accepted: false, reason: 'insufficient-description' };
+  }
+  if (countPublicWords(redactSensitiveDetails(source, location)) < minimumWords) {
+    return { accepted: false, reason: 'insufficient-public-description' };
   }
 
   return { accepted: true, reason: 'accepted' };
