@@ -35,6 +35,11 @@ register_deactivation_hook(__FILE__, ['ST_Sync_Deactivator', 'deactivate']);
 
 if (is_admin()) {
     new ST_Sync_Admin();
+    add_filter('plugin_action_links_' . plugin_basename(__FILE__), static function (array $links): array {
+        $settings_link = '<a href="' . esc_url(admin_url('admin.php?page=st-sync-settings')) . '">' . esc_html__('Settings', 'service-titan-job-post') . '</a>';
+        array_unshift($links, $settings_link);
+        return $links;
+    });
 }
 
 new ST_Sync_Permalinks();

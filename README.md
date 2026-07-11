@@ -74,6 +74,7 @@ summary, service, city, date, and permalink that visitors see.
 3. Activate **ServiceTitan Local Job Content**.
 4. Use a non-Plain permalink structure.
 5. Open **Local Jobs Sync** in the WordPress admin.
+   You can also use the plugin list **Settings** link after activation.
 6. Start a monthly or yearly subscription checkout, or paste an existing
    subscription license key.
 7. Activate the site with the subscription license after checkout is complete.
