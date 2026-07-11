@@ -177,10 +177,21 @@ test('summary removes known private contact and address details', () => {
 
 test('generated summary and payload are local, descriptive, and omit publication status', () => {
   const summary = buildSummary(job, jobType, location);
+  const unpunctuated = buildSummary({
+    ...job,
+    summaryOfWork: 'Restored drainage and verified normal flow'
+  }, jobType, location);
+  const privateDetailSummary = buildSummary({
+    ...job,
+    summaryOfWork: 'Jane Customer reported trouble at 10 Main St Unit #2. Cleared the sewer line.'
+  }, jobType, location);
   const payload = buildJobPayload(job, jobType, location, settings);
 
-  assert.match(summary, /^Drain Cleaning service was completed for a customer in Newark\./);
+  assert.match(summary, /^Drain Cleaning job completed for a local customer in Newark, NJ\./);
   assert.match(summary, /hydro-jet/);
+  assert.match(unpunctuated, /Restored drainage and verified normal flow\.$/);
+  assert.doesNotMatch(privateDetailSummary, /Jane Customer|10 Main|Unit #2/i);
+  assert.match(privateDetailSummary, /Cleared the sewer line\./);
   assert.equal(payload.service_slug, 'plumbing');
   assert.equal(payload.source_tenant_id, 'tenant-123');
   assert.equal(payload.location_slug, 'newark');

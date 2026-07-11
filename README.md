@@ -13,11 +13,13 @@ jobs into privacy-conscious, locally relevant website content.
    redaction.
 4. It removes known customer names, exact addresses, email addresses, phone
    numbers, and links from generated copy.
-5. It classifies the job as plumbing, HVAC, electrical, or a configured service.
-6. WordPress creates the job as **Pending Review** and assigns service/location
+5. It writes a concise local summary that includes the job type, city/state, and
+   redacted completion detail without inventing outcomes.
+6. It classifies the job as plumbing, HVAC, electrical, or a configured service.
+7. WordPress creates the job as **Pending Review** and assigns service/location
    terms.
-7. An editor reviews and publishes the post.
-8. The Recent Local Jobs block shows the newest approved jobs on the matching
+8. An editor reviews and publishes the post.
+9. The Recent Local Jobs block shows the newest approved jobs on the matching
    service/location page.
 
 The worker never sends a publish status. WordPress enforces the review queue.
@@ -107,6 +109,10 @@ summaries and Job Type boilerplate are deliberately not converted into public
 claims about completed work. The worker also checks the redacted public text
 against the minimum summary length, so jobs that become mostly private-detail
 placeholders are held back instead of queued for review.
+Generated summaries are deterministic and reviewable. They add local context
+such as `Drain Cleaning job completed for a local customer in Newark, NJ` before
+the redacted completion detail, but they do not invent work that was not present
+in the verified ServiceTitan completion field.
 
 ## Hosted service
 

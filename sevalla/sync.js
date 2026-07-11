@@ -179,6 +179,17 @@ function countPublicWords(value) {
   );
 }
 
+function locationLabel(location = {}) {
+  const address = location.address || {};
+  return [cleanText(address.city), cleanText(address.state)].filter(Boolean).join(', ');
+}
+
+function sentence(value) {
+  const text = cleanText(value);
+  if (!text) return '';
+  return /[.!?]$/.test(text) ? text : `${text}.`;
+}
+
 function resolveService(jobType, settings) {
   const name = cleanText(jobType.name);
   const jobClass = cleanText(jobType.class);
@@ -261,13 +272,14 @@ function shouldImportJob(job, jobType, location, settings) {
 }
 
 function buildSummary(job, jobType, location, settings = {}) {
-  const city = cleanText(location.address && location.address.city);
-  const typeName = cleanText(jobType.name) || 'service';
-  let work = redactSensitiveDetails(completionDescription(job, settings), location);
+  const place = locationLabel(location);
+  const typeName = cleanText(jobType && jobType.name) || 'Service';
+  const work = sentence(redactSensitiveDetails(completionDescription(job, settings), location));
 
-  if (work && !/[.!?]$/.test(work)) work += '.';
+  const introduction = place
+    ? `${typeName} job completed for a local customer in ${place}.`
+    : `${typeName} job completed for a local customer.`;
 
-  const introduction = `${typeName} service was completed for a customer in ${city}.`;
   if (!work || work.toLowerCase() === typeName.toLowerCase() || work.toLowerCase() === `${typeName.toLowerCase()}.`) {
     return introduction;
   }
