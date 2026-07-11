@@ -350,6 +350,14 @@ test('stores ServiceTitan credentials encrypted and returns claims only to the w
       updated_at: null
     });
 
+    const unconnectedClaims = await request('/internal/v1/sync/claims', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer worker-secret' },
+      body: {}
+    });
+    assert.equal(unconnectedClaims.response.status, 200);
+    assert.equal(unconnectedClaims.json.sites.length, 0);
+
     const connection = await request('/v1/connections/servicetitan', {
       method: 'PUT',
       headers: auth,
