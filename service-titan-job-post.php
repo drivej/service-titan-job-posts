@@ -27,6 +27,14 @@ require_once ST_SYNC_PLUGIN_DIR . 'includes/class-sevalla-api.php';
 require_once ST_SYNC_PLUGIN_DIR . 'includes/class-service-client.php';
 require_once ST_SYNC_PLUGIN_DIR . 'admin/class-st-sync-admin.php';
 
+add_action('plugins_loaded', static function (): void {
+    load_plugin_textdomain(
+        'service-titan-job-post',
+        false,
+        dirname(plugin_basename(__FILE__)) . '/languages'
+    );
+});
+
 add_action('init', ['ST_Sync_Activator', 'register_content_model']);
 add_action('init', ['ST_Sync_Activator', 'maybe_upgrade'], 99);
 
