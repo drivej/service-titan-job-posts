@@ -335,23 +335,61 @@ class ST_Sync_Admin
             return;
         }
 
+        $current = $this->current_job_update_values($post->ID);
         $rows = [
-            __('Summary', 'service-titan-job-post')      => $pending['summary'],
-            __('Completed on', 'service-titan-job-post') => $pending['completed_on'],
-            __('City', 'service-titan-job-post')         => $pending['city'],
-            __('State', 'service-titan-job-post')        => $pending['state'],
-            __('Service', 'service-titan-job-post')      => $pending['service_name'],
-            __('Location slug', 'service-titan-job-post')=> $pending['location_slug'],
-            __('Job type', 'service-titan-job-post')     => $pending['job_type_name'],
+            [
+                'label'    => __('Summary', 'service-titan-job-post'),
+                'current'  => $current['summary'],
+                'incoming' => $pending['summary'],
+            ],
+            [
+                'label'    => __('Completed on', 'service-titan-job-post'),
+                'current'  => $current['completed_on'],
+                'incoming' => $pending['completed_on'],
+            ],
+            [
+                'label'    => __('City', 'service-titan-job-post'),
+                'current'  => $current['city'],
+                'incoming' => $pending['city'],
+            ],
+            [
+                'label'    => __('State', 'service-titan-job-post'),
+                'current'  => $current['state'],
+                'incoming' => $pending['state'],
+            ],
+            [
+                'label'    => __('Service', 'service-titan-job-post'),
+                'current'  => $current['service_name'],
+                'incoming' => $pending['service_name'],
+            ],
+            [
+                'label'    => __('Location slug', 'service-titan-job-post'),
+                'current'  => $current['location_slug'],
+                'incoming' => $pending['location_slug'],
+            ],
+            [
+                'label'    => __('Job type', 'service-titan-job-post'),
+                'current'  => $current['job_type_name'],
+                'incoming' => $pending['job_type_name'],
+            ],
         ];
         ?>
         <p><?php esc_html_e('ServiceTitan has newer source data for this job. Automation preserved the current editorial copy; apply this update only after review.', 'service-titan-job-post'); ?></p>
-        <table class="widefat striped"><tbody>
-            <?php foreach ($rows as $label => $value) : ?>
-                <?php if ('' === trim((string) $value)) { continue; } ?>
+        <table class="widefat striped">
+            <thead>
                 <tr>
-                    <th scope="row"><?php echo esc_html($label); ?></th>
-                    <td><?php echo esc_html((string) $value); ?></td>
+                    <th scope="col"><?php esc_html_e('Field', 'service-titan-job-post'); ?></th>
+                    <th scope="col"><?php esc_html_e('Current reviewed value', 'service-titan-job-post'); ?></th>
+                    <th scope="col"><?php esc_html_e('Incoming ServiceTitan value', 'service-titan-job-post'); ?></th>
+                </tr>
+            </thead>
+            <tbody>
+            <?php foreach ($rows as $row) : ?>
+                <?php if ('' === trim((string) $row['current']) && '' === trim((string) $row['incoming'])) { continue; } ?>
+                <tr>
+                    <th scope="row"><?php echo esc_html($row['label']); ?></th>
+                    <td><?php echo esc_html((string) $row['current']); ?></td>
+                    <td><?php echo esc_html((string) $row['incoming']); ?></td>
                 </tr>
             <?php endforeach; ?>
         </tbody></table>
@@ -863,6 +901,28 @@ class ST_Sync_Admin
         ];
     }
 
+    private function current_job_update_values(int $post_id): array
+    {
+        $summary = trim((string) get_post_field('post_excerpt', $post_id));
+        if ('' === $summary) {
+            $summary = (string) get_post_meta($post_id, 'st_job_summary', true);
+        }
+        $service_name = $this->term_names($post_id, 'st_service');
+        if ('' === $service_name) {
+            $service_name = (string) get_post_meta($post_id, 'st_job_service', true);
+        }
+
+        return [
+            'summary'       => $summary,
+            'completed_on'  => (string) get_post_meta($post_id, 'st_job_date', true),
+            'city'          => (string) get_post_meta($post_id, 'st_job_city', true),
+            'state'         => (string) get_post_meta($post_id, 'st_job_state', true),
+            'service_name'  => $service_name,
+            'location_slug' => $this->first_term_slug($post_id, 'st_location'),
+            'job_type_name' => (string) get_post_meta($post_id, 'st_job_type_name', true),
+        ];
+    }
+
     private function clear_pending_job_update(int $post_id): void
     {
         update_post_meta($post_id, 'st_job_update_available', '0');
@@ -925,6 +985,17 @@ class ST_Sync_Admin
         }
 
         return implode(', ', wp_list_pluck($terms, 'name'));
+    }
+
+    private function first_term_slug(int $post_id, string $taxonomy): string
+    {
+        $terms = wp_get_post_terms($post_id, $taxonomy);
+        if (is_wp_error($terms) || empty($terms)) {
+            return '';
+        }
+
+        $first = reset($terms);
+        return $first instanceof WP_Term ? (string) $first->slug : '';
     }
 
     private function has_job_details_block(int $post_id): bool

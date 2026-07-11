@@ -282,6 +282,10 @@ try {
         'Newark Integration Test' === ($service_schema['areaServed']['address']['addressLocality'] ?? ''),
         'Job details block did not emit local Service JSON-LD.'
     );
+    wp_update_post([
+        'ID'           => $approved_id,
+        'post_excerpt' => 'Approved editorial copy',
+    ]);
     $approved_content = (string) get_post_field('post_content', $approved_id);
     $approved_permalink = get_permalink($approved_id);
     $approved_date = get_post_meta($approved_id, 'st_job_date', true);
@@ -332,6 +336,16 @@ try {
         'Changed source details were not saved for editorial comparison.'
     );
     $admin = new ST_Sync_Admin();
+    ob_start();
+    $admin->render_job_update_meta_box(get_post($approved_id));
+    $source_update_box = (string) ob_get_clean();
+    st_test_assert(
+        false !== strpos($source_update_box, 'Current reviewed value') &&
+        false !== strpos($source_update_box, 'Incoming ServiceTitan value') &&
+        false !== strpos($source_update_box, 'Approved editorial copy') &&
+        false !== strpos($source_update_box, $changed['summary']),
+        'Source update meta box did not compare current and incoming values.'
+    );
     $admin_columns = $admin->job_list_columns([
         'cb'    => '<input type="checkbox">',
         'title' => 'Title',
