@@ -19,6 +19,7 @@ class ST_Sync_Admin
         add_action('admin_post_st_sync_refresh', [$this, 'refresh_status']);
         add_action('admin_post_st_sync_billing_portal', [$this, 'open_billing_portal']);
         add_action('admin_post_st_sync_deactivate', [$this, 'deactivate_site']);
+        add_action('admin_post_st_sync_create_location_page', [$this, 'create_location_page_action']);
         add_action('add_meta_boxes_st_job', [$this, 'add_job_update_meta_box']);
         add_action('admin_post_st_sync_apply_job_update', [$this, 'apply_job_update_action']);
         add_action('admin_post_st_sync_dismiss_job_update', [$this, 'dismiss_job_update_action']);
@@ -809,6 +810,12 @@ class ST_Sync_Admin
                                 <?php endif; ?>
                             <?php else : ?>
                                 <strong><?php esc_html_e('Missing page', 'service-titan-job-post'); ?></strong>
+                                <?php $create_url = wp_nonce_url(add_query_arg([
+                                    'action'        => 'st_sync_create_location_page',
+                                    'service_slug'  => $row['service_slug'],
+                                    'location_slug' => $row['location_slug'],
+                                ], admin_url('admin-post.php')), 'st_sync_create_location_page'); ?>
+                                <br><a class="button button-small" href="<?php echo esc_url($create_url); ?>"><?php esc_html_e('Create page', 'service-titan-job-post'); ?></a>
                             <?php endif; ?>
                         </td>
                     </tr>
@@ -866,6 +873,59 @@ class ST_Sync_Admin
     {
         $page = get_page_by_path($service_slug . '/' . $location_slug, OBJECT, 'page');
         return $page instanceof WP_Post ? (int) $page->ID : 0;
+    }
+
+    public function create_location_page_action(): void
+    {
+        $this->authorize_action('st_sync_create_location_page');
+        $service_slug = isset($_GET['service_slug']) ? sanitize_title(wp_unslash($_GET['service_slug'])) : '';
+        $location_slug = isset($_GET['location_slug']) ? sanitize_title(wp_unslash($_GET['location_slug'])) : '';
+        $result = $this->create_location_page($service_slug, $location_slug);
+        $this->redirect_with_result($result, __('Location page created.', 'service-titan-job-post'));
+    }
+
+    /**
+     * @return int|WP_Error
+     */
+    public function create_location_page(string $service_slug, string $location_slug)
+    {
+        $service_slug = sanitize_title($service_slug);
+        $location_slug = sanitize_title($location_slug);
+        if ('' === $service_slug || '' === $location_slug) {
+            return new WP_Error('st_sync_invalid_page_slugs', __('Service and location slugs are required.', 'service-titan-job-post'));
+        }
+
+        $existing = $this->location_page_id($service_slug, $location_slug);
+        if ($existing) {
+            return $existing;
+        }
+
+        $service_page = get_page_by_path($service_slug, OBJECT, 'page');
+        if (! $service_page instanceof WP_Post) {
+            $service_page_id = wp_insert_post([
+                'post_type'    => 'page',
+                'post_status'  => 'publish',
+                'post_title'   => $this->title_from_slug($service_slug),
+                'post_name'    => $service_slug,
+                'post_content' => '',
+            ], true);
+            if (is_wp_error($service_page_id)) {
+                return $service_page_id;
+            }
+        } else {
+            $service_page_id = (int) $service_page->ID;
+        }
+
+        $location_page_id = wp_insert_post([
+            'post_type'    => 'page',
+            'post_status'  => 'publish',
+            'post_parent'  => (int) $service_page_id,
+            'post_title'   => $this->title_from_slug($location_slug),
+            'post_name'    => $location_slug,
+            'post_content' => '',
+        ], true);
+
+        return $location_page_id;
     }
 
     private function render_connection_form(array $connection): void

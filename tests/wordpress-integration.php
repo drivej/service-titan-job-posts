@@ -283,6 +283,17 @@ try {
         'ID'           => (int) $city_id,
         'post_content' => '',
     ]);
+    $admin_helper = new ST_Sync_Admin();
+    $created_location_id = $admin_helper->create_location_page('hvac-' . $run_token, 'montclair-' . $run_token);
+    st_test_assert(! is_wp_error($created_location_id), 'Location page creation failed.');
+    $created_service_page = get_page_by_path('hvac-' . $run_token, OBJECT, 'page');
+    st_test_assert(
+        $created_service_page instanceof WP_Post &&
+        (int) $created_service_page->ID === wp_get_post_parent_id((int) $created_location_id),
+        'Location page creation did not create the expected service/location page hierarchy.'
+    );
+    $created_posts[] = (int) $created_location_id;
+    $created_posts[] = (int) $created_service_page->ID;
     $shortcode_rendered = do_shortcode(sprintf(
         '[st_recent_jobs service="%s" location="%s" count="2" heading="Shortcode Jobs" intro="Custom local proof from reviewed jobs."]',
         esc_attr($service_slug),
