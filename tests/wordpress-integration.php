@@ -71,6 +71,7 @@ $test_site = [
 update_option('st_sync_site', $test_site, false);
 $had_sync_options = false !== get_option('st_sync_options', false);
 $previous_sync_options = get_option('st_sync_options', []);
+$previous_permalink_structure = get_option('permalink_structure');
 
 function st_test_assert($condition, string $message): void
 {
@@ -664,9 +665,11 @@ try {
         'Hosted sync health was not cached locally.'
     );
     if (class_exists('ST_Sync_Admin')) {
+        update_option('permalink_structure', '');
         ob_start();
         (new ST_Sync_Admin())->render_settings_page();
         $settings_html = (string) ob_get_clean();
+        update_option('permalink_structure', $previous_permalink_structure);
         st_test_assert(
             false !== strpos($settings_html, 'Sync health') &&
             false !== strpos($settings_html, 'Editorial queue') &&
@@ -674,6 +677,7 @@ try {
             false !== strpos($settings_html, 'Review source updates') &&
             false !== strpos($settings_html, 'Location page coverage') &&
             false !== strpos($settings_html, '/' . $service_slug . '/' . $location_slug . '/') &&
+            false !== strpos($settings_html, 'non-Plain permalink structure') &&
             false !== strpos($settings_html, 'ServiceTitan connection') &&
             false !== strpos($settings_html, 'Connected') &&
             false !== strpos($settings_html, 'Delivery refused by WordPress'),
@@ -720,6 +724,7 @@ try {
     } else {
         delete_option('st_sync_options');
     }
+    update_option('permalink_structure', $previous_permalink_structure);
 }
 
 if ($failure instanceof Throwable) {

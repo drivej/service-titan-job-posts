@@ -183,6 +183,17 @@ class ST_Sync_Admin
                     <?php esc_html_e('Content policy changes are saved locally but have not synced to the hosted worker yet. Save again after the hosted service is reachable.', 'service-titan-job-post'); ?>
                 </p></div>
             <?php endif; ?>
+            <?php if ($this->uses_plain_permalinks()) : ?>
+                <div class="notice notice-warning"><p>
+                    <?php
+                    printf(
+                        /* translators: %s: Permalink settings URL */
+                        wp_kses_post(__('Local Job URLs need a non-Plain permalink structure. <a href="%s">Open Permalink Settings</a> and choose a pretty permalink format before publishing job pages.', 'service-titan-job-post')),
+                        esc_url(admin_url('options-permalink.php'))
+                    );
+                    ?>
+                </p></div>
+            <?php endif; ?>
 
             <?php if (! $client->is_configured()) : ?>
                 <div class="notice notice-error"><p>
@@ -1255,5 +1266,10 @@ class ST_Sync_Admin
             'type'    => in_array($type, ['success', 'error', 'warning', 'info'], true) ? $type : 'info',
             'message' => sanitize_text_field($message),
         ], MINUTE_IN_SECONDS);
+    }
+
+    private function uses_plain_permalinks(): bool
+    {
+        return '' === (string) get_option('permalink_structure');
     }
 }

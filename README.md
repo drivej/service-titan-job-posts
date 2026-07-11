@@ -84,6 +84,8 @@ Once activated, the Subscription panel includes a **Manage billing** button that
 opens the hosted Stripe Billing Portal. Canceling there stops future sync claims
 after Stripe webhooks update the hosted subscription state; existing WordPress
 job posts remain untouched.
+The settings page warns admins when WordPress is still using Plain permalinks,
+because nested job URLs require a pretty permalink structure.
 
 Required ServiceTitan application scopes:
 
