@@ -6,6 +6,7 @@
  * Version:           2.1.0
  * Author:            Drive
  * License:           GPLv2 or later
+ * Update URI:        https://github.com/drivej/service-titan-job-posts
  * Text Domain:       service-titan-job-post
  * Requires at least: 6.4
  * Requires PHP:      7.4
