@@ -703,6 +703,11 @@ try {
     );
     st_test_assert(! is_wp_error($service_client->deactivate()), 'Hosted site deactivation failed.');
     st_test_assert(false === get_option('st_sync_site', false), 'Deactivation did not remove local delivery credentials.');
+    st_test_assert(
+        'st_job' === get_post_type($approved_id) &&
+        'publish' === get_post_status($approved_id),
+        'Deactivation removed or unpublished existing Local Job content.'
+    );
     remove_filter('pre_http_request', $http_mock, 10);
 
 } catch (Throwable $error) {
