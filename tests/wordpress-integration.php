@@ -649,10 +649,12 @@ try {
             false !== strpos($settings_html, 'Editorial queue') &&
             false !== strpos($settings_html, 'Review pending jobs') &&
             false !== strpos($settings_html, 'Review source updates') &&
+            false !== strpos($settings_html, 'Location page coverage') &&
+            false !== strpos($settings_html, '/' . $service_slug . '/' . $location_slug . '/') &&
             false !== strpos($settings_html, 'ServiceTitan connection') &&
             false !== strpos($settings_html, 'Connected') &&
             false !== strpos($settings_html, 'Delivery refused by WordPress'),
-            'Hosted connection, sync health, and editorial queue were not rendered in the admin settings page.'
+            'Hosted connection, sync health, editorial queue, and page coverage were not rendered in the admin settings page.'
         );
     }
     st_test_assert(! is_wp_error($service_client->update_policy(class_exists('ST_Sync_Admin') ? ST_Sync_Admin::defaults() : [])), 'Hosted policy update failed.');

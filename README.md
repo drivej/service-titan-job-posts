@@ -219,7 +219,8 @@ update columns. Editors can sort by completed date and filter the list to jobs
 that need ServiceTitan source-update review.
 The Local Jobs Sync settings page also includes an **Editorial queue** panel
 with counts and direct links for pending jobs and source updates that need
-review.
+review, plus a **Location page coverage** panel that shows whether imported
+service/location pairs have matching nested Pages for automatic block output.
 
 New imports use the **Job Details** block as their default post body. The
 generated summary is stored in the excerpt and job meta, so the block can render

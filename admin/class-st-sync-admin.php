@@ -223,6 +223,7 @@ class ST_Sync_Admin
             <?php else : ?>
                 <?php $this->render_subscription_status($site, $entitlement); ?>
                 <?php $this->render_editorial_queue_status(); ?>
+                <?php $this->render_location_page_coverage(); ?>
                 <?php $this->render_connection_form(is_array($site['connection'] ?? null) ? $site['connection'] : []); ?>
 
                 <form action="options.php" method="post">
@@ -771,6 +772,102 @@ class ST_Sync_Admin
         return (int) $query->found_posts;
     }
 
+    private function render_location_page_coverage(): void
+    {
+        $rows = $this->location_page_coverage_rows();
+        ?>
+        <h2><?php esc_html_e('Location page coverage', 'service-titan-job-post'); ?></h2>
+        <p class="description">
+            <?php esc_html_e('Recent Local Jobs can auto-append to nested Pages whose slugs match imported service and location terms.', 'service-titan-job-post'); ?>
+        </p>
+        <?php if (empty($rows)) : ?>
+            <p><?php esc_html_e('No imported job locations are available yet.', 'service-titan-job-post'); ?></p>
+            <?php return; ?>
+        <?php endif; ?>
+        <table class="widefat striped" style="max-width: 900px">
+            <thead>
+                <tr>
+                    <th><?php esc_html_e('Service / Location', 'service-titan-job-post'); ?></th>
+                    <th><?php esc_html_e('Jobs found', 'service-titan-job-post'); ?></th>
+                    <th><?php esc_html_e('Matching page', 'service-titan-job-post'); ?></th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php foreach ($rows as $row) : ?>
+                    <tr>
+                        <td>
+                            <?php echo esc_html($row['service_name'] . ' / ' . $row['location_name']); ?><br>
+                            <code><?php echo esc_html('/' . $row['service_slug'] . '/' . $row['location_slug'] . '/'); ?></code>
+                        </td>
+                        <td><?php echo esc_html(number_format_i18n((int) $row['count'])); ?></td>
+                        <td>
+                            <?php if ($row['page_id']) : ?>
+                                <a href="<?php echo esc_url(get_permalink((int) $row['page_id'])); ?>"><?php esc_html_e('View page', 'service-titan-job-post'); ?></a>
+                                <?php $edit_link = get_edit_post_link((int) $row['page_id']); ?>
+                                <?php if ($edit_link) : ?>
+                                    · <a href="<?php echo esc_url($edit_link); ?>"><?php esc_html_e('Edit', 'service-titan-job-post'); ?></a>
+                                <?php endif; ?>
+                            <?php else : ?>
+                                <strong><?php esc_html_e('Missing page', 'service-titan-job-post'); ?></strong>
+                            <?php endif; ?>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
+        <?php
+    }
+
+    private function location_page_coverage_rows(): array
+    {
+        $query = new WP_Query([
+            'post_type'              => 'st_job',
+            'post_status'            => ['publish', 'pending', 'draft', 'private', 'future'],
+            'posts_per_page'         => 250,
+            'fields'                 => 'ids',
+            'meta_key'               => 'st_job_date',
+            'orderby'                => 'meta_value',
+            'order'                  => 'DESC',
+            'no_found_rows'          => true,
+            'update_post_meta_cache' => true,
+            'update_post_term_cache' => true,
+        ]);
+
+        $rows = [];
+        foreach ($query->posts as $post_id) {
+            $service = $this->first_term_info((int) $post_id, 'st_service');
+            $location = $this->first_term_info((int) $post_id, 'st_location');
+            $service_name = $service['name'] ?: (string) get_post_meta((int) $post_id, 'st_job_service', true);
+            $location_name = $location['name'] ?: (string) get_post_meta((int) $post_id, 'st_job_city', true);
+            $service_slug = $service['slug'] ?: sanitize_title($service_name);
+            $location_slug = $location['slug'] ?: sanitize_title($location_name);
+            if ('' === $service_slug || '' === $location_slug) {
+                continue;
+            }
+
+            $key = $service_slug . '/' . $location_slug;
+            if (! isset($rows[$key])) {
+                $rows[$key] = [
+                    'service_name'  => $service_name ?: $this->title_from_slug($service_slug),
+                    'service_slug'  => $service_slug,
+                    'location_name' => $location_name ?: $this->title_from_slug($location_slug),
+                    'location_slug' => $location_slug,
+                    'count'         => 0,
+                    'page_id'       => $this->location_page_id($service_slug, $location_slug),
+                ];
+            }
+            $rows[$key]['count']++;
+        }
+
+        return array_values($rows);
+    }
+
+    private function location_page_id(string $service_slug, string $location_slug): int
+    {
+        $page = get_page_by_path($service_slug . '/' . $location_slug, OBJECT, 'page');
+        return $page instanceof WP_Post ? (int) $page->ID : 0;
+    }
+
     private function render_connection_form(array $connection): void
     {
         $connected = ! empty($connection['connected']);
@@ -1007,6 +1104,24 @@ class ST_Sync_Admin
 
         $first = reset($terms);
         return $first instanceof WP_Term ? (string) $first->slug : '';
+    }
+
+    private function first_term_info(int $post_id, string $taxonomy): array
+    {
+        $terms = wp_get_post_terms($post_id, $taxonomy);
+        if (is_wp_error($terms) || empty($terms)) {
+            return ['name' => '', 'slug' => ''];
+        }
+
+        $first = reset($terms);
+        if (! $first instanceof WP_Term) {
+            return ['name' => '', 'slug' => ''];
+        }
+
+        return [
+            'name' => (string) $first->name,
+            'slug' => (string) $first->slug,
+        ];
     }
 
     private function has_job_details_block(int $post_id): bool
