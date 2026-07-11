@@ -815,7 +815,7 @@ class ST_Sync_Admin
                                     'service_slug'  => $row['service_slug'],
                                     'location_slug' => $row['location_slug'],
                                 ], admin_url('admin-post.php')), 'st_sync_create_location_page'); ?>
-                                <br><a class="button button-small" href="<?php echo esc_url($create_url); ?>"><?php esc_html_e('Create page', 'service-titan-job-post'); ?></a>
+                                <br><a class="button button-small" href="<?php echo esc_url($create_url); ?>"><?php esc_html_e('Create draft page', 'service-titan-job-post'); ?></a>
                             <?php endif; ?>
                         </td>
                     </tr>
@@ -881,7 +881,7 @@ class ST_Sync_Admin
         $service_slug = isset($_GET['service_slug']) ? sanitize_title(wp_unslash($_GET['service_slug'])) : '';
         $location_slug = isset($_GET['location_slug']) ? sanitize_title(wp_unslash($_GET['location_slug'])) : '';
         $result = $this->create_location_page($service_slug, $location_slug);
-        $this->redirect_with_result($result, __('Location page created.', 'service-titan-job-post'));
+        $this->redirect_with_result($result, __('Draft location page created.', 'service-titan-job-post'));
     }
 
     /**
@@ -904,7 +904,7 @@ class ST_Sync_Admin
         if (! $service_page instanceof WP_Post) {
             $service_page_id = wp_insert_post([
                 'post_type'    => 'page',
-                'post_status'  => 'publish',
+                'post_status'  => 'draft',
                 'post_title'   => $this->title_from_slug($service_slug),
                 'post_name'    => $service_slug,
                 'post_content' => '',
@@ -918,7 +918,7 @@ class ST_Sync_Admin
 
         $location_page_id = wp_insert_post([
             'post_type'    => 'page',
-            'post_status'  => 'publish',
+            'post_status'  => 'draft',
             'post_parent'  => (int) $service_page_id,
             'post_title'   => $this->title_from_slug($location_slug),
             'post_name'    => $location_slug,

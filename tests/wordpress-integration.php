@@ -292,6 +292,11 @@ try {
         (int) $created_service_page->ID === wp_get_post_parent_id((int) $created_location_id),
         'Location page creation did not create the expected service/location page hierarchy.'
     );
+    st_test_assert(
+        'draft' === get_post_status((int) $created_service_page->ID) &&
+        'draft' === get_post_status((int) $created_location_id),
+        'Location page creation did not leave generated pages in draft review.'
+    );
     $created_location_content = (string) get_post_field('post_content', (int) $created_location_id);
     st_test_assert(
         has_block('st-sync/recent-jobs', $created_location_content) &&
