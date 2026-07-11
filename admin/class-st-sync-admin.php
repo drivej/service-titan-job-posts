@@ -922,10 +922,20 @@ class ST_Sync_Admin
             'post_parent'  => (int) $service_page_id,
             'post_title'   => $this->title_from_slug($location_slug),
             'post_name'    => $location_slug,
-            'post_content' => '',
+            'post_content' => $this->recent_jobs_block_content($service_slug, $location_slug),
         ], true);
 
         return $location_page_id;
+    }
+
+    private function recent_jobs_block_content(string $service_slug, string $location_slug): string
+    {
+        $attributes = wp_json_encode([
+            'serviceSlug'  => $service_slug,
+            'locationSlug' => $location_slug,
+        ], JSON_UNESCAPED_SLASHES);
+
+        return '<!-- wp:st-sync/recent-jobs ' . ($attributes ?: '{}') . ' /-->';
     }
 
     private function render_connection_form(array $connection): void

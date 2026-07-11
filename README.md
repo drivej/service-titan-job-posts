@@ -222,7 +222,8 @@ with counts and direct links for pending jobs and source updates that need
 review, plus a **Location page coverage** panel that shows whether imported
 service/location pairs have matching nested Pages for automatic block output.
 When a matching page is missing, admins can create the service/location page
-hierarchy from that panel.
+hierarchy from that panel; the created location page includes the Recent Local
+Jobs block with the matching slugs already set.
 
 New imports use the **Job Details** block as their default post body. The
 generated summary is stored in the excerpt and job meta, so the block can render

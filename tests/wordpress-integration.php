@@ -292,6 +292,13 @@ try {
         (int) $created_service_page->ID === wp_get_post_parent_id((int) $created_location_id),
         'Location page creation did not create the expected service/location page hierarchy.'
     );
+    $created_location_content = (string) get_post_field('post_content', (int) $created_location_id);
+    st_test_assert(
+        has_block('st-sync/recent-jobs', $created_location_content) &&
+        false !== strpos($created_location_content, 'hvac-' . $run_token) &&
+        false !== strpos($created_location_content, 'montclair-' . $run_token),
+        'Location page creation did not seed a service/location Recent Local Jobs block.'
+    );
     $created_posts[] = (int) $created_location_id;
     $created_posts[] = (int) $created_service_page->ID;
     $shortcode_rendered = do_shortcode(sprintf(
