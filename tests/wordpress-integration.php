@@ -251,6 +251,38 @@ try {
         2 === substr_count(do_blocks($global_count_block), 'st-recent-jobs__card'),
         'An attribute-less block did not inherit the global recent-job count.'
     );
+    $blocks_renderer = new ST_Sync_Blocks();
+    $auto_rendered = $blocks_renderer->append_recent_jobs_for_page('<p>City page copy.</p>', (int) $city_id);
+    st_test_assert(
+        false !== strpos($auto_rendered, 'City page copy.') &&
+        2 === substr_count($auto_rendered, 'st-recent-jobs__card'),
+        'Matching location page did not auto-append recent jobs.'
+    );
+    update_option('st_sync_options', array_merge(
+        is_array(get_option('st_sync_options', [])) ? get_option('st_sync_options', []) : [],
+        ['auto_append_recent_jobs' => '0']
+    ));
+    st_test_assert(
+        false === strpos($blocks_renderer->append_recent_jobs_for_page('<p>City page copy.</p>', (int) $city_id), 'st-recent-jobs__card'),
+        'Auto-append recent jobs setting did not disable automatic location-page output.'
+    );
+    update_option('st_sync_options', array_merge(
+        is_array(get_option('st_sync_options', [])) ? get_option('st_sync_options', []) : [],
+        ['auto_append_recent_jobs' => '1']
+    ));
+    wp_update_post([
+        'ID'           => (int) $city_id,
+        'post_content' => $global_count_block,
+    ]);
+    $deduped_rendered = $blocks_renderer->append_recent_jobs_for_page(do_blocks($global_count_block), (int) $city_id);
+    st_test_assert(
+        2 === substr_count($deduped_rendered, 'st-recent-jobs__card'),
+        'Auto-append duplicated a manually placed Recent Local Jobs block.'
+    );
+    wp_update_post([
+        'ID'           => (int) $city_id,
+        'post_content' => '',
+    ]);
     $shortcode_rendered = do_shortcode(sprintf(
         '[st_recent_jobs service="%s" location="%s" count="2" heading="Shortcode Jobs" intro="Custom local proof from reviewed jobs."]',
         esc_attr($service_slug),

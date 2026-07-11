@@ -42,6 +42,7 @@ class ST_Sync_Admin
             'allowed_cities'         => '',
             'excluded_job_types'     => '',
             'recent_jobs_count'      => '3',
+            'auto_append_recent_jobs'=> '1',
         ];
     }
 
@@ -105,6 +106,12 @@ class ST_Sync_Admin
             __('Optional comma- or line-separated exact Job Type names.', 'service-titan-job-post')
         );
         $this->add_field('recent_jobs_count', __('Jobs shown on location pages', 'service-titan-job-post'), 'number');
+        $this->add_field(
+            'auto_append_recent_jobs',
+            __('Automatically show on location pages', 'service-titan-job-post'),
+            'checkbox',
+            __('Append Recent Local Jobs to matching nested Pages, such as plumbing/newark, unless the page already contains the block or shortcode.', 'service-titan-job-post')
+        );
     }
 
     public function sanitize_options($input): array
@@ -121,6 +128,7 @@ class ST_Sync_Admin
             'allowed_cities'          => sanitize_textarea_field((string) ($input['allowed_cities'] ?? '')),
             'excluded_job_types'      => sanitize_textarea_field((string) ($input['excluded_job_types'] ?? '')),
             'recent_jobs_count'       => (string) min(12, max(1, (int) ($input['recent_jobs_count'] ?? 3))),
+            'auto_append_recent_jobs' => empty($input['auto_append_recent_jobs']) ? '0' : '1',
         ];
     }
 
@@ -130,12 +138,15 @@ class ST_Sync_Admin
         $id = (string) $args['id'];
         $type = (string) $args['type'];
         $value = (string) ($options[$id] ?? '');
-        $name = 'st_sync_options[' . esc_attr($id) . ']';
+        $name = 'st_sync_options[' . $id . ']';
 
-        if ('textarea' === $type) {
-            echo '<textarea name="' . $name . '" class="large-text" rows="4">' . esc_textarea($value) . '</textarea>';
+        if ('checkbox' === $type) {
+            echo '<input type="hidden" name="' . esc_attr($name) . '" value="0">';
+            echo '<label><input type="checkbox" name="' . esc_attr($name) . '" value="1" ' . checked('1', $value, false) . '> ' . esc_html__('Enabled', 'service-titan-job-post') . '</label>';
+        } elseif ('textarea' === $type) {
+            echo '<textarea name="' . esc_attr($name) . '" class="large-text" rows="4">' . esc_textarea($value) . '</textarea>';
         } else {
-            echo '<input type="' . esc_attr($type) . '" name="' . $name . '" value="' . esc_attr($value) . '" class="regular-text">';
+            echo '<input type="' . esc_attr($type) . '" name="' . esc_attr($name) . '" value="' . esc_attr($value) . '" class="regular-text">';
         }
 
         if (! empty($args['description'])) {

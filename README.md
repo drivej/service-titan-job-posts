@@ -41,6 +41,11 @@ different. The block renders a local intro paragraph using the reviewed
 service/city/job count, or you can provide custom intro copy in the block
 settings.
 
+By default, the plugin also appends Recent Local Jobs automatically to matching
+nested location Pages such as `/plumbing/newark/`. It skips that automatic
+output when the page already contains the block or shortcode, and the behavior
+can be disabled in the Local Jobs Sync settings.
+
 Classic Editor and page-builder sites can use the same renderer with a
 shortcode:
 

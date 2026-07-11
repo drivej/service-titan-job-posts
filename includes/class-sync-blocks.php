@@ -12,6 +12,7 @@ class ST_Sync_Blocks
     public function __construct()
     {
         add_action('init', [$this, 'register_blocks']);
+        add_filter('the_content', [$this, 'append_recent_jobs_to_content'], 20);
         add_shortcode('st_recent_jobs', [$this, 'recent_jobs_shortcode']);
         add_shortcode('service_titan_recent_jobs', [$this, 'recent_jobs_shortcode']);
     }
@@ -221,6 +222,44 @@ class ST_Sync_Blocks
         ], '', null);
     }
 
+    public function append_recent_jobs_to_content(string $content): string
+    {
+        if (is_admin() || ! is_singular('page') || ! in_the_loop() || ! is_main_query()) {
+            return $content;
+        }
+
+        return $this->append_recent_jobs_for_page($content, (int) get_the_ID());
+    }
+
+    public function append_recent_jobs_for_page(string $content, int $post_id): string
+    {
+        $options = wp_parse_args(get_option('st_sync_options', []), ST_Sync_Admin::defaults());
+        if ('1' !== (string) ($options['auto_append_recent_jobs'] ?? '1')) {
+            return $content;
+        }
+
+        if ('page' !== get_post_type($post_id)) {
+            return $content;
+        }
+
+        $raw_content = (string) get_post_field('post_content', $post_id);
+        if ($this->contains_recent_jobs_renderer($raw_content)) {
+            return $content;
+        }
+
+        $context = $this->resolve_service_location_for_page($post_id);
+        if ('' === $context['service'] || '' === $context['location']) {
+            return $content;
+        }
+
+        $markup = $this->render_recent_jobs([
+            'serviceSlug'  => $context['service'],
+            'locationSlug' => $context['location'],
+        ], '', null);
+
+        return '' === $markup ? $content : $content . "\n\n" . $markup;
+    }
+
     private function resolve_service_location(array $attributes, ?WP_Block $block = null): array
     {
         $service = sanitize_title((string) ($attributes['serviceSlug'] ?? ''));
@@ -233,6 +272,12 @@ class ST_Sync_Blocks
         $post_id = $block && isset($block->context['postId'])
             ? (int) $block->context['postId']
             : (int) get_queried_object_id();
+
+        return $this->resolve_service_location_for_page($post_id, $service, $location);
+    }
+
+    private function resolve_service_location_for_page(int $post_id, string $service = '', string $location = ''): array
+    {
         $page = get_post($post_id);
 
         if ($page instanceof WP_Post) {
@@ -253,6 +298,13 @@ class ST_Sync_Blocks
         }
 
         return compact('service', 'location');
+    }
+
+    private function contains_recent_jobs_renderer(string $content): bool
+    {
+        return has_block('st-sync/recent-jobs', $content) ||
+            has_shortcode($content, 'st_recent_jobs') ||
+            has_shortcode($content, 'service_titan_recent_jobs');
     }
 
     private function recent_jobs_intro(array $attributes, string $service_name, string $location_name, int $job_count): string
