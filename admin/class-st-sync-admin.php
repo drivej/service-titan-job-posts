@@ -819,6 +819,7 @@ class ST_Sync_Admin
                                 <?php if ($edit_link) : ?>
                                     · <a href="<?php echo esc_url($edit_link); ?>"><?php esc_html_e('Edit', 'service-titan-job-post'); ?></a>
                                 <?php endif; ?>
+                                <br><span><?php echo esc_html(sprintf(__('Status: %s', 'service-titan-job-post'), $this->page_status_label((string) $row['page_status']))); ?></span>
                             <?php else : ?>
                                 <strong><?php esc_html_e('Missing page', 'service-titan-job-post'); ?></strong>
                                 <?php $create_url = wp_nonce_url(add_query_arg([
@@ -865,13 +866,15 @@ class ST_Sync_Admin
 
             $key = $service_slug . '/' . $location_slug;
             if (! isset($rows[$key])) {
+                $page_id = $this->location_page_id($service_slug, $location_slug);
                 $rows[$key] = [
                     'service_name'  => $service_name ?: $this->title_from_slug($service_slug),
                     'service_slug'  => $service_slug,
                     'location_name' => $location_name ?: $this->title_from_slug($location_slug),
                     'location_slug' => $location_slug,
                     'count'         => 0,
-                    'page_id'       => $this->location_page_id($service_slug, $location_slug),
+                    'page_id'       => $page_id,
+                    'page_status'   => $page_id ? (string) get_post_status($page_id) : '',
                 ];
             }
             $rows[$key]['count']++;
@@ -884,6 +887,12 @@ class ST_Sync_Admin
     {
         $page = get_page_by_path($service_slug . '/' . $location_slug, OBJECT, 'page');
         return $page instanceof WP_Post ? (int) $page->ID : 0;
+    }
+
+    private function page_status_label(string $status): string
+    {
+        $object = get_post_status_object($status);
+        return $object && ! empty($object->label) ? (string) $object->label : $this->title_from_slug($status);
     }
 
     public function create_location_page_action(): void

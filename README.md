@@ -222,7 +222,8 @@ that need ServiceTitan source-update review.
 The Local Jobs Sync settings page also includes an **Editorial queue** panel
 with counts and direct links for pending jobs and source updates that need
 review, plus a **Location page coverage** panel that shows whether imported
-service/location pairs have matching nested Pages for automatic block output.
+service/location pairs have matching nested Pages for automatic block output
+and whether those pages are drafts or published.
 When a matching page is missing, admins can create a draft service/location
 page hierarchy from that panel; the created location page includes the Recent
 Local Jobs block with the matching slugs already set.

@@ -677,6 +677,7 @@ try {
             false !== strpos($settings_html, 'Review source updates') &&
             false !== strpos($settings_html, 'Location page coverage') &&
             false !== strpos($settings_html, '/' . $service_slug . '/' . $location_slug . '/') &&
+            false !== strpos($settings_html, 'Status:') &&
             false !== strpos($settings_html, 'non-Plain permalink structure') &&
             false !== strpos($settings_html, 'ServiceTitan connection') &&
             false !== strpos($settings_html, 'Connected') &&
