@@ -667,6 +667,11 @@ class ST_Sync_Admin
                 <tr><th><?php esc_html_e('Current period ends', 'service-titan-job-post'); ?></th><td><?php echo esc_html((string) ($entitlement['current_period_end'] ?? '')); ?></td></tr>
             </tbody>
         </table>
+        <?php if (! $eligible) : ?>
+            <div class="notice notice-warning inline"><p>
+                <?php esc_html_e('Future job imports are paused until the subscription is active or trialing again. Existing Local Job posts remain on this site.', 'service-titan-job-post'); ?>
+            </p></div>
+        <?php endif; ?>
         <form action="<?php echo esc_url(admin_url('admin-post.php')); ?>" method="post">
             <input type="hidden" name="action" value="st_sync_refresh">
             <?php wp_nonce_field('st_sync_refresh'); ?>

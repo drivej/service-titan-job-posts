@@ -144,6 +144,8 @@ Eligible means the server-side subscription is `active` or `trialing`. Canceled,
 unpaid, paused, past-due, incomplete, and revoked activations do not appear in
 worker sync claims. Existing WordPress job posts are not gated by entitlement and
 remain on the customer's site.
+The plugin settings page mirrors that boundary by warning when future imports
+are paused while existing Local Job posts stay available.
 The plugin admin also reads hosted sync health from the service, including the
 last successful run, last attempt, run status, totals, and latest error.
 It also displays whether ServiceTitan credentials have been connected in the
