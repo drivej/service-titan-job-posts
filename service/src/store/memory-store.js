@@ -298,6 +298,25 @@ class MemoryStore {
     return claims;
   }
 
+  async authorizeSyncDelivery(input, context) {
+    const site = this.sites.get(input.site_id);
+    if (!site || site.revoked_at) {
+      return { authorized: false, reason: 'site_unavailable' };
+    }
+
+    const now = context.now instanceof Date ? context.now : new Date(context.now || Date.now());
+    if (site.sync_claim_id !== input.claim_id || !isSyncClaimLeased(site, now)) {
+      return { authorized: false, reason: 'invalid_or_expired_claim' };
+    }
+
+    const subscription = this.subscriptions.get(site.account_id);
+    const entitlement = buildEntitlement(subscription, context.priceMap, now);
+    return {
+      authorized: entitlement.eligible,
+      reason: entitlement.eligible ? 'authorized' : 'subscription_ineligible'
+    };
+  }
+
   async recordSyncRun(input, context) {
     const site = this.sites.get(input.site_id);
     if (!site || site.revoked_at) {

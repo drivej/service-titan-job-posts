@@ -246,6 +246,15 @@ function sanitizeSyncRun(input) {
   };
 }
 
+function sanitizeSyncAuthorization(input) {
+  const siteId = String(input.site_id || '').trim();
+  const claimId = String(input.claim_id || '').trim().slice(0, 120);
+  if (!siteId || !claimId) {
+    throw serviceError(400, 'invalid_sync_authorization', 'site_id and claim_id are required.');
+  }
+  return { site_id: siteId, claim_id: claimId };
+}
+
 async function handleRoute(request, rawBody, body, dependencies) {
   const { config, store } = dependencies;
   const stripeClient = dependencies.stripeClient || new StripeApiClient({ secretKey: config.stripeSecretKey });
@@ -465,6 +474,15 @@ async function handleRoute(request, rawBody, body, dependencies) {
       payload: {
         sites: claims
       }
+    };
+  }
+
+  if (request.method === 'POST' && url.pathname === '/internal/v1/sync/authorize') {
+    requireWorker(request, config);
+    const authorization = await store.authorizeSyncDelivery(sanitizeSyncAuthorization(body), context);
+    return {
+      status: 200,
+      payload: authorization
     };
   }
 

@@ -133,6 +133,10 @@ initial backfill date, and later claims resume from the last successful worker
 run with a small overlap for safety. Claims are leased for a short window so
 two scheduled worker instances do not process the same customer site at the
 same time; the worker releases that lease when it reports the run result.
+Before every WordPress delivery, the worker asks the hosted service to recheck
+the exact claim lease and current subscription. This prevents a cancellation
+that happens mid-run from receiving later job posts, and customer-edited PHP
+cannot bypass the hosted check.
 
 Checkout creates a Stripe subscription session and returns a one-time license
 key, but that key cannot activate a WordPress site until a signed Stripe webhook

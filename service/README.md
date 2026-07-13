@@ -54,6 +54,9 @@ Worker-facing endpoint:
   returns eligible sites with a `claim_id` and `sync_claimed_until` lease. A
   currently leased site is omitted until the lease expires or the worker reports
   a run result.
+- `POST /internal/v1/sync/authorize` with worker authentication, `site_id`, and
+  `claim_id` rechecks the live lease and subscription immediately before each
+  WordPress delivery. A denial fails closed without creating a post.
 - `POST /internal/v1/sync/runs` with `Authorization: Bearer <WORKER_API_KEY>`
   records a site's sync result. The worker should echo the `claim_id` it
   received. Successful runs advance the site's cursor monotonically; failed

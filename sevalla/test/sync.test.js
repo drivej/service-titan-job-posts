@@ -352,6 +352,51 @@ test('hosted claim sync uses service-issued entitlement, credentials, policy, an
   assert.match(posted[0][2]['X-ST-Signature'], /^v1=[a-f0-9]{64}$/);
 });
 
+test('hosted claim sync rechecks entitlement immediately before WordPress delivery', async () => {
+  const claim = {
+    site_id: 'site_canceled_mid_run',
+    claim_id: 'claim_canceled_mid_run',
+    delivery_url: 'https://client.example/wp-json/st-sync/v1/jobs',
+    signing_secret: 'site-secret',
+    policy: settings,
+    service_titan: {
+      tenant_id: 'tenant-123',
+      environment: 'production',
+      client_id: 'client',
+      client_secret: 'secret'
+    }
+  };
+  const posted = [];
+  const reports = [];
+
+  const result = await syncClaimedSites({
+    claims: [claim],
+    source: { jobs: [job], jobTypes: [jobType], locations: [location] },
+    quiet: true,
+    authorizeClaim(receivedClaim) {
+      assert.equal(receivedClaim.claim_id, claim.claim_id);
+      return false;
+    },
+    reportRun(body) {
+      reports.push(body);
+    },
+    wpClientFactory() {
+      return {
+        async post(...args) {
+          posted.push(args);
+          return { data: { created: true } };
+        }
+      };
+    }
+  });
+
+  assert.equal(result.imported, 0);
+  assert.equal(result.failed, 1);
+  assert.equal(posted.length, 0);
+  assert.equal(reports[0].status, 'failed');
+  assert.match(reports[0].error, /denied delivery authorization/);
+});
+
 test('hosted claim sync reports successful run windows without requiring HTTP in injected-claim tests', async () => {
   const claim = {
     site_id: 'site_reported',

@@ -396,6 +396,36 @@ class PostgresStore {
     });
   }
 
+  async authorizeSyncDelivery(input, context) {
+    const now = context.now instanceof Date ? context.now : new Date(context.now || Date.now());
+    const record = row(await this.db.query(
+      `SELECT s.sync_claim_id, s.sync_claimed_until, s.revoked_at,
+              sub.status, sub.price_id, sub.current_period_end
+         FROM sites s
+         LEFT JOIN subscriptions sub ON sub.account_id = s.account_id
+        WHERE s.id = $1`,
+      [input.site_id]
+    ));
+
+    if (!record || record.revoked_at) {
+      return { authorized: false, reason: 'site_unavailable' };
+    }
+    const claimedUntil = new Date(record.sync_claimed_until || 0);
+    if (
+      record.sync_claim_id !== input.claim_id ||
+      !Number.isFinite(claimedUntil.getTime()) ||
+      claimedUntil <= now
+    ) {
+      return { authorized: false, reason: 'invalid_or_expired_claim' };
+    }
+
+    const entitlement = buildEntitlement(record, context.priceMap, now);
+    return {
+      authorized: entitlement.eligible,
+      reason: entitlement.eligible ? 'authorized' : 'subscription_ineligible'
+    };
+  }
+
   async recordSyncRun(input, context) {
     const now = context.now || new Date();
     const stats = input.stats && typeof input.stats === 'object' ? input.stats : {};

@@ -443,6 +443,59 @@ test('stores ServiceTitan credentials encrypted and returns claims only to the w
     assert.equal(claims.json.sites[0].policy.min_price, '500');
     assert.equal(claims.json.sites[0].signing_secret, activation.signing_secret);
     assert.equal(claims.json.sites[0].modified_before, '2026-07-07T12:00:00.000Z');
+
+    const authorized = await request('/internal/v1/sync/authorize', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer worker-secret' },
+      body: {
+        site_id: activation.site_id,
+        claim_id: claims.json.sites[0].claim_id
+      }
+    });
+    assert.deepEqual(authorized.json, { authorized: true, reason: 'authorized' });
+
+    const wrongClaim = await request('/internal/v1/sync/authorize', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer worker-secret' },
+      body: { site_id: activation.site_id, claim_id: 'claim_wrong' }
+    });
+    assert.deepEqual(wrongClaim.json, { authorized: false, reason: 'invalid_or_expired_claim' });
+
+    const expired = await store.authorizeSyncDelivery({
+      site_id: activation.site_id,
+      claim_id: claims.json.sites[0].claim_id
+    }, {
+      now: new Date('2026-07-07T12:31:00.000Z'),
+      priceMap: { monthly: 'price_monthly', yearly: 'price_yearly' }
+    });
+    assert.deepEqual(expired, { authorized: false, reason: 'invalid_or_expired_claim' });
+
+    const subscription = store.dump().subscriptions[0];
+    await store.applyStripeSubscription({
+      ...subscription,
+      status: 'canceled',
+      stripe_event_created: 1783425600
+    });
+    const canceled = await request('/internal/v1/sync/authorize', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer worker-secret' },
+      body: {
+        site_id: activation.site_id,
+        claim_id: claims.json.sites[0].claim_id
+      }
+    });
+    assert.deepEqual(canceled.json, { authorized: false, reason: 'subscription_ineligible' });
+
+    await store.revokeSite(activation.site_id, { now: FIXED_NOW });
+    const revoked = await request('/internal/v1/sync/authorize', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer worker-secret' },
+      body: {
+        site_id: activation.site_id,
+        claim_id: claims.json.sites[0].claim_id
+      }
+    });
+    assert.deepEqual(revoked.json, { authorized: false, reason: 'site_unavailable' });
   });
 });
 

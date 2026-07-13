@@ -619,6 +619,31 @@ async function reportSyncRun(config = {}, claim = {}, result = {}, status = 'suc
   }));
 }
 
+async function authorizeClaimDelivery(config = {}, claim = {}) {
+  if (typeof config.authorizeClaim === 'function') {
+    return config.authorizeClaim(claim);
+  }
+
+  const workerApiKey = String(config.workerApiKey || '');
+  if (!config.serviceUrl && !workerApiKey) return true;
+  if (!config.serviceUrl || !workerApiKey) {
+    throw new Error('SERVICE_URL and WORKER_API_KEY are required for delivery authorization');
+  }
+
+  const serviceUrl = normalizeHostedServiceUrl(config.serviceUrl, config);
+  const response = await requestWithRetry(() => axios.post(`${serviceUrl}/internal/v1/sync/authorize`, {
+    site_id: claim.site_id,
+    claim_id: claim.claim_id || ''
+  }, {
+    timeout: DEFAULT_TIMEOUT_MS,
+    headers: {
+      Authorization: `Bearer ${workerApiKey}`,
+      'Content-Type': 'application/json'
+    }
+  }));
+  return response.data && response.data.authorized === true;
+}
+
 async function safeReportSyncRun(config, claim, result, status, error = null) {
   try {
     await reportSyncRun(config, claim, result, status, error);
@@ -661,6 +686,11 @@ async function syncJobs(config = {}) {
 
     try {
       const payload = buildJobPayload(job, jobType, location, settings);
+      if (typeof config.authorizeDelivery === 'function' && !(await config.authorizeDelivery(payload))) {
+        const error = new Error('Hosted service denied delivery authorization');
+        error.code = 'delivery_not_authorized';
+        throw error;
+      }
       const delivery = config.signDeliveries === false
         ? { body: payload, headers: {} }
         : signDelivery(payload, config.siteId, config.siteSigningSecret);
@@ -674,6 +704,7 @@ async function syncJobs(config = {}) {
         console.log(`${action} job ${payload.job_number} for ${payload.service_slug}/${payload.location_slug}`);
       }
     } catch (error) {
+      if (error && error.code === 'delivery_not_authorized') throw error;
       results.failed += 1;
       console.error(`Failed job ${job.jobNumber || job.id}: ${formatError(error)}`);
     }
@@ -696,6 +727,7 @@ async function syncClaimedSites(config = {}) {
     try {
       const result = await syncJobs({
         appKey: config.appKey,
+        authorizeDelivery: () => authorizeClaimDelivery(config, claim),
         deliveryUrl: claim.delivery_url,
         devMode: config.devMode,
         quiet: config.quiet,
@@ -780,6 +812,7 @@ async function main() {
 }
 
 module.exports = {
+  authorizeClaimDelivery,
   buildJobPayload,
   buildSummary,
   chunk,
