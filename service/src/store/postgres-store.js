@@ -477,22 +477,32 @@ class PostgresStore {
     };
   }
 
-  async recordWebhookEvent(eventId, eventType = 'unknown') {
-    const result = await this.db.query(
-      `INSERT INTO stripe_webhook_events (id, type)
-       VALUES ($1, $2)
-       ON CONFLICT (id) DO NOTHING`,
-      [eventId, eventType]
-    );
-    return result.rowCount > 0;
+  async processStripeWebhook(event, subscription, context) {
+    return this.withTransaction(async (client) => {
+      const result = await client.query(
+        `INSERT INTO stripe_webhook_events (id, type)
+         VALUES ($1, $2)
+         ON CONFLICT (id) DO NOTHING`,
+        [event.id, event.type]
+      );
+      if (result.rowCount === 0) return false;
+
+      if (subscription) {
+        const applied = await this.applyStripeSubscription(subscription, context, client);
+        if (!applied) {
+          throw serviceError(503, 'stripe_subscription_not_mapped', 'Stripe subscription could not be mapped to an account.');
+        }
+      }
+      return true;
+    });
   }
 
-  async applyStripeSubscription(subscription) {
+  async applyStripeSubscription(subscription, context, queryable = this.db) {
     if (!subscription) return null;
 
     let accountId = subscription.account_id;
     if (!accountId && subscription.stripe_customer_id) {
-      const account = row(await this.db.query(
+      const account = row(await queryable.query(
         'SELECT id FROM accounts WHERE stripe_customer_id = $1',
         [subscription.stripe_customer_id]
       ));
@@ -500,7 +510,7 @@ class PostgresStore {
     }
     if (!accountId) return null;
 
-    return row(await this.db.query(
+    const applied = row(await queryable.query(
       `INSERT INTO subscriptions (
          account_id, stripe_subscription_id, stripe_customer_id, status,
          price_id, current_period_end, cancel_at_period_end, stripe_event_created, updated_at
@@ -535,6 +545,12 @@ class PostgresStore {
           ? Number(subscription.stripe_event_created)
           : null
       ]
+    ));
+    if (applied) return applied;
+
+    return row(await queryable.query(
+      'SELECT * FROM subscriptions WHERE account_id = $1',
+      [accountId]
     ));
   }
 }

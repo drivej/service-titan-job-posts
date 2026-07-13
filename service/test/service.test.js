@@ -768,3 +768,58 @@ test('Stripe webhook signatures, idempotency, and event ordering protect subscri
     assert.deepEqual(claims.json.sites, []);
   });
 });
+
+test('Stripe webhook retries remain processable after a subscription update failure', async () => {
+  class RetryableWebhookStore extends MemoryStore {
+    constructor(seed) {
+      super(seed);
+      this.failNextSubscriptionUpdate = true;
+    }
+
+    async applyStripeSubscription(subscription, context) {
+      if (this.failNextSubscriptionUpdate) {
+        this.failNextSubscriptionUpdate = false;
+        throw new Error('temporary subscription storage failure');
+      }
+      return super.applyStripeSubscription(subscription, context);
+    }
+  }
+
+  const store = new RetryableWebhookStore(createSeed());
+  await withService(store, async ({ request, config }) => {
+    const event = {
+      id: 'evt_retryable_cancel',
+      type: 'customer.subscription.deleted',
+      created: 1783425660,
+      data: {
+        object: {
+          id: 'sub_123',
+          object: 'subscription',
+          customer: 'cus_123',
+          status: 'canceled',
+          current_period_end: 1782864000,
+          metadata: { account_id: 'acct_1' },
+          items: { data: [{ price: { id: 'price_monthly' } }] }
+        }
+      }
+    };
+    const raw = JSON.stringify(event);
+    const headers = {
+      'Stripe-Signature': stripeSignatureHeader(raw, config.stripeWebhookSecret, Math.floor(FIXED_NOW.getTime() / 1000))
+    };
+
+    await assert.rejects(
+      request('/v1/stripe/webhooks', { method: 'POST', headers, body: raw }),
+      /temporary subscription storage failure/
+    );
+
+    const retry = await request('/v1/stripe/webhooks', { method: 'POST', headers, body: raw });
+    assert.equal(retry.response.status, 200);
+    assert.equal(retry.json.duplicate, undefined);
+    assert.equal(store.dump().subscriptions[0].status, 'canceled');
+
+    const duplicate = await request('/v1/stripe/webhooks', { method: 'POST', headers, body: raw });
+    assert.equal(duplicate.response.status, 200);
+    assert.equal(duplicate.json.duplicate, true);
+  });
+});

@@ -143,6 +143,8 @@ key, but that key cannot activate a WordPress site until a signed Stripe webhook
 updates the server-side subscription to `active` or `trialing`.
 Delayed Stripe events are ordered by their signed event creation time, so an
 older active snapshot cannot overwrite a newer cancellation.
+Webhook deduplication and subscription updates are atomic, allowing Stripe to
+retry safely if subscription persistence fails.
 The plugin admin can start this checkout flow and shows the one-time license key
 before redirecting to Stripe; it does not save that key locally.
 

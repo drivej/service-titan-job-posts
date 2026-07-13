@@ -347,9 +347,15 @@ class MemoryStore {
     });
   }
 
-  async recordWebhookEvent(eventId) {
-    if (this.webhookEvents.has(eventId)) return false;
-    this.webhookEvents.add(eventId);
+  async processStripeWebhook(event, subscription, context) {
+    if (this.webhookEvents.has(event.id)) return false;
+    if (subscription) {
+      const applied = await this.applyStripeSubscription(subscription, context);
+      if (!applied) {
+        throw serviceError(503, 'stripe_subscription_not_mapped', 'Stripe subscription could not be mapped to an account.');
+      }
+    }
+    this.webhookEvents.add(event.id);
     return true;
   }
 

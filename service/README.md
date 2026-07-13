@@ -22,6 +22,8 @@ WordPress whether a subscription is valid.
 - Validate Stripe webhook signatures from the raw request body before updating
   subscription state, and ignore older delayed subscription events so they
   cannot restore access after a newer cancellation.
+- Commit webhook deduplication and subscription updates in one transaction so a
+  storage failure remains safely retryable instead of losing the billing event.
 
 Old WordPress posts are never deleted or hidden by this service. If a
 subscription becomes canceled, unpaid, paused, or otherwise ineligible, the

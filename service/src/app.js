@@ -507,14 +507,6 @@ async function handleRoute(request, rawBody, body, dependencies) {
       throw serviceError(400, 'invalid_stripe_event', 'Stripe event id and type are required.');
     }
 
-    const firstSeen = await store.recordWebhookEvent(event.id, event.type);
-    if (!firstSeen) {
-      return {
-        status: 200,
-        payload: { received: true, duplicate: true }
-      };
-    }
-
     const subscription = subscriptionFromStripeObject(event.data && event.data.object, event.type);
     if (subscription) {
       const eventCreated = Number(event.created);
@@ -522,7 +514,14 @@ async function handleRoute(request, rawBody, body, dependencies) {
         throw serviceError(400, 'invalid_stripe_event', 'Stripe subscription events require a valid created timestamp.');
       }
       subscription.stripe_event_created = eventCreated;
-      await store.applyStripeSubscription(subscription, context);
+    }
+
+    const processed = await store.processStripeWebhook(event, subscription, context);
+    if (!processed) {
+      return {
+        status: 200,
+        payload: { received: true, duplicate: true }
+      };
     }
 
     return {
