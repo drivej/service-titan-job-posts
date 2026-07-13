@@ -444,7 +444,7 @@ try {
         'date'  => 'Date',
     ]);
     st_test_assert(
-        isset($admin_columns['st_job_completed'], $admin_columns['st_job_service_location'], $admin_columns['st_job_source_update']),
+        isset($admin_columns['st_job_completed'], $admin_columns['st_job_service_location'], $admin_columns['st_job_source_update'], $admin_columns['st_job_publish']),
         'Local Jobs admin columns did not include review metadata.'
     );
     $sortable_columns = $admin->sortable_job_list_columns([]);
@@ -543,6 +543,34 @@ try {
         'Editor pending title' === get_the_title($pending_id) &&
         false !== strpos((string) get_post_field('post_content', $pending_id), 'Editor pending copy'),
         'A repeat sync overwrote pending editorial work.'
+    );
+    ob_start();
+    $admin->render_job_list_column('st_job_publish', $pending_id);
+    $publish_button = (string) ob_get_clean();
+    st_test_assert(
+        false !== strpos($publish_button, 'st_sync_publish_job') &&
+        false !== strpos($publish_button, 'button button-small') &&
+        false !== strpos($publish_button, '_wpnonce'),
+        'Pending Local Job did not receive a nonce-protected Publish button in the admin list.'
+    );
+    $publish_result = $admin->publish_job($pending_id);
+    st_test_assert(! is_wp_error($publish_result), 'Publishing a pending Local Job from the admin list failed.');
+    st_test_assert('publish' === get_post_status($pending_id), 'Admin-list Publish did not publish the Local Job.');
+    st_test_assert(
+        'Editor pending title' === get_the_title($pending_id) &&
+        false !== strpos((string) get_post_field('post_content', $pending_id), 'Editor pending copy'),
+        'Admin-list Publish changed reviewed Local Job content.'
+    );
+    st_test_assert(
+        is_wp_error($admin->publish_job($pending_id)),
+        'Admin-list Publish allowed an already-published Local Job to be published again.'
+    );
+    ob_start();
+    $admin->render_job_list_column('st_job_publish', $pending_id);
+    $published_label = (string) ob_get_clean();
+    st_test_assert(
+        false === strpos($published_label, 'st_sync_publish_job') && false !== strpos($published_label, 'Published'),
+        'Published Local Job retained an actionable Publish button.'
     );
 
     $post_type = get_post_type_object('st_job');
