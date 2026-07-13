@@ -1,5 +1,7 @@
 'use strict';
 
+require('dotenv').config({ quiet: true });
+
 const http = require('http');
 const { createApp } = require('./app');
 const { createConfig, validateProductionConfig } = require('./config');
