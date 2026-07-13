@@ -109,6 +109,22 @@ function st_test_json_ld_scripts(string $html): array
     }, $matches[1] ?? [])));
 }
 
+function st_test_render_job_details(int $post_id): string
+{
+    $parsed_block = [
+        'blockName'    => 'st-sync/job-details',
+        'attrs'        => [],
+        'innerBlocks'  => [],
+        'innerHTML'    => '',
+        'innerContent' => [],
+    ];
+    $block = new WP_Block($parsed_block, [
+        'postId'   => $post_id,
+        'postType' => 'st_job',
+    ]);
+    return (new ST_Sync_Blocks())->render_job_details([], '', $block);
+}
+
 try {
     $parent_id = wp_insert_post([
         'post_type'   => 'page',
@@ -325,11 +341,7 @@ try {
     );
 
     $approved_id = end($created_posts);
-    global $post;
-    $post = get_post($approved_id);
-    setup_postdata($post);
-    $details_rendered = do_blocks((string) get_post_field('post_content', $approved_id));
-    wp_reset_postdata();
+    $details_rendered = st_test_render_job_details($approved_id);
     $details_schemas = st_test_json_ld_scripts($details_rendered);
     $service_schema = $details_schemas[0] ?? [];
     st_test_assert(
@@ -467,10 +479,7 @@ try {
         has_block('st-sync/job-details', (string) get_post_field('post_content', $approved_id)),
         'Applying a reviewed update removed the default Job Details block.'
     );
-    $post = get_post($approved_id);
-    setup_postdata($post);
-    $applied_rendered = do_blocks((string) get_post_field('post_content', $approved_id));
-    wp_reset_postdata();
+    $applied_rendered = st_test_render_job_details($approved_id);
     st_test_assert(
         false !== strpos($applied_rendered, $changed['summary']),
         'Applying a reviewed update did not update the rendered Job Details block.'
