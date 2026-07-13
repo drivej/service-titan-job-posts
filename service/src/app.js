@@ -499,6 +499,11 @@ async function handleRoute(request, rawBody, body, dependencies) {
 
     const subscription = subscriptionFromStripeObject(event.data && event.data.object, event.type);
     if (subscription) {
+      const eventCreated = Number(event.created);
+      if (!Number.isFinite(eventCreated) || eventCreated <= 0) {
+        throw serviceError(400, 'invalid_stripe_event', 'Stripe subscription events require a valid created timestamp.');
+      }
+      subscription.stripe_event_created = eventCreated;
       await store.applyStripeSubscription(subscription, context);
     }
 

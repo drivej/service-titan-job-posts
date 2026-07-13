@@ -5,7 +5,7 @@ const { buildEntitlement } = require('../entitlements');
 const { serviceError } = require('../errors');
 const { SYNC_CLAIM_LEASE_MS, syncWindowForSite } = require('./sync-window');
 
-const LATEST_MIGRATION = '003_sync_claim_leases.sql';
+const LATEST_MIGRATION = '004_stripe_event_ordering.sql';
 
 function row(result) {
   return result.rows && result.rows.length > 0 ? result.rows[0] : null;
@@ -473,8 +473,8 @@ class PostgresStore {
     return row(await this.db.query(
       `INSERT INTO subscriptions (
          account_id, stripe_subscription_id, stripe_customer_id, status,
-         price_id, current_period_end, cancel_at_period_end, updated_at
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,now())
+         price_id, current_period_end, cancel_at_period_end, stripe_event_created, updated_at
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,now())
        ON CONFLICT (account_id) DO UPDATE SET
          stripe_subscription_id = EXCLUDED.stripe_subscription_id,
          stripe_customer_id = EXCLUDED.stripe_customer_id,
@@ -482,7 +482,16 @@ class PostgresStore {
          price_id = EXCLUDED.price_id,
          current_period_end = EXCLUDED.current_period_end,
          cancel_at_period_end = EXCLUDED.cancel_at_period_end,
+         stripe_event_created = EXCLUDED.stripe_event_created,
          updated_at = now()
+       WHERE subscriptions.stripe_event_created IS NULL
+          OR EXCLUDED.stripe_event_created IS NULL
+          OR EXCLUDED.stripe_event_created > subscriptions.stripe_event_created
+          OR (
+            EXCLUDED.stripe_event_created = subscriptions.stripe_event_created
+            AND subscriptions.status IN ('active', 'trialing')
+            AND EXCLUDED.status NOT IN ('active', 'trialing')
+          )
        RETURNING *`,
       [
         accountId,
@@ -491,7 +500,10 @@ class PostgresStore {
         subscription.status || 'unknown',
         subscription.price_id || '',
         subscription.current_period_end || null,
-        subscription.cancel_at_period_end === true
+        subscription.cancel_at_period_end === true,
+        subscription.stripe_event_created != null && Number.isFinite(Number(subscription.stripe_event_created))
+          ? Number(subscription.stripe_event_created)
+          : null
       ]
     ));
   }

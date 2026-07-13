@@ -137,6 +137,8 @@ same time; the worker releases that lease when it reports the run result.
 Checkout creates a Stripe subscription session and returns a one-time license
 key, but that key cannot activate a WordPress site until a signed Stripe webhook
 updates the server-side subscription to `active` or `trialing`.
+Delayed Stripe events are ordered by their signed event creation time, so an
+older active snapshot cannot overwrite a newer cancellation.
 The plugin admin can start this checkout flow and shows the one-time license key
 before redirecting to Stripe; it does not save that key locally.
 

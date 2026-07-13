@@ -346,6 +346,26 @@ class MemoryStore {
     }
     if (!accountId || !this.accounts.has(accountId)) return null;
 
+    const current = this.subscriptions.get(accountId);
+    const incomingEventCreated = subscription.stripe_event_created == null
+      ? Number.NaN
+      : Number(subscription.stripe_event_created);
+    const currentEventCreated = !current || current.stripe_event_created == null
+      ? Number.NaN
+      : Number(current.stripe_event_created);
+    const incomingEligible = ['active', 'trialing'].includes(String(subscription.status || ''));
+    const currentEligible = ['active', 'trialing'].includes(String(current && current.status || ''));
+    if (
+      Number.isFinite(incomingEventCreated) &&
+      Number.isFinite(currentEventCreated) &&
+      (
+        incomingEventCreated < currentEventCreated ||
+        (incomingEventCreated === currentEventCreated && (incomingEligible || !currentEligible))
+      )
+    ) {
+      return clone(current);
+    }
+
     const record = {
       account_id: accountId,
       stripe_subscription_id: subscription.stripe_subscription_id,
@@ -354,6 +374,7 @@ class MemoryStore {
       price_id: subscription.price_id || '',
       current_period_end: subscription.current_period_end || '',
       cancel_at_period_end: subscription.cancel_at_period_end === true,
+      stripe_event_created: Number.isFinite(incomingEventCreated) ? incomingEventCreated : null,
       updated_at: new Date().toISOString()
     };
     this.subscriptions.set(accountId, record);

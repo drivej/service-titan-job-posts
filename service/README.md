@@ -20,7 +20,8 @@ WordPress whether a subscription is valid.
 - Lease claimed sites for 30 minutes so overlapping worker processes do not
   duplicate ServiceTitan API work for the same customer site.
 - Validate Stripe webhook signatures from the raw request body before updating
-  subscription state.
+  subscription state, and ignore older delayed subscription events so they
+  cannot restore access after a newer cancellation.
 
 Old WordPress posts are never deleted or hidden by this service. If a
 subscription becomes canceled, unpaid, paused, or otherwise ineligible, the

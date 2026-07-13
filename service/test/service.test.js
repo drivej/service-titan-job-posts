@@ -258,6 +258,7 @@ test('checkout creates a license but activation stays blocked until Stripe marks
     const event = {
       id: 'evt_checkout_active',
       type: 'customer.subscription.updated',
+      created: 1783425540,
       data: {
         object: {
           id: 'sub_checkout',
@@ -616,7 +617,7 @@ test('revoked activations preserve old content boundary by removing only future 
   });
 });
 
-test('Stripe webhook signature verification is required and webhook events are idempotent', async () => {
+test('Stripe webhook signatures, idempotency, and event ordering protect subscription state', async () => {
   const store = new MemoryStore(createSeed());
   await withService(store, async ({ request, config }) => {
     const activation = await activate(request);
@@ -635,6 +636,7 @@ test('Stripe webhook signature verification is required and webhook events are i
     const event = {
       id: 'evt_1',
       type: 'customer.subscription.deleted',
+      created: 1783425600,
       data: {
         object: {
           id: 'sub_123',
@@ -680,6 +682,29 @@ test('Stripe webhook signature verification is required and webhook events are i
     });
     assert.equal(duplicate.response.status, 200);
     assert.equal(duplicate.json.duplicate, true);
+
+    const staleActiveEvent = {
+      ...event,
+      id: 'evt_stale_active',
+      type: 'customer.subscription.updated',
+      created: event.created - 60,
+      data: {
+        object: {
+          ...event.data.object,
+          status: 'active'
+        }
+      }
+    };
+    const staleRaw = JSON.stringify(staleActiveEvent);
+    const stale = await request('/v1/stripe/webhooks', {
+      method: 'POST',
+      headers: {
+        'Stripe-Signature': stripeSignatureHeader(staleRaw, config.stripeWebhookSecret, Math.floor(FIXED_NOW.getTime() / 1000))
+      },
+      body: staleRaw
+    });
+    assert.equal(stale.response.status, 200);
+    assert.equal(store.dump().subscriptions[0].status, 'canceled');
 
     const claims = await request('/internal/v1/sync/claims', {
       method: 'POST',
