@@ -77,7 +77,8 @@ summary, service, city, date, and permalink that visitors see.
    You can also use the plugin list **Settings** link after activation.
 5. Start a monthly or yearly subscription checkout, or paste an existing
    subscription license key.
-6. Activate the site with the subscription license after checkout is complete.
+6. After checkout, return to the settings page and choose **Complete setup**.
+   The plugin verifies the Stripe session and activates this installation.
 7. Send ServiceTitan tenant/client credentials to the hosted service.
 8. Configure content filters and service mappings.
 
@@ -138,9 +139,12 @@ the exact claim lease and current subscription. This prevents a cancellation
 that happens mid-run from receiving later job posts, and customer-edited PHP
 cannot bypass the hosted check.
 
-Checkout creates a Stripe subscription session and returns a one-time license
-key, but that key cannot activate a WordPress site until a signed Stripe webhook
-updates the server-side subscription to `active` or `trialing`.
+Checkout creates a Stripe subscription session and an installation-bound,
+24-hour recovery token. After payment, the plugin presents that token to the
+hosted service, which verifies the Checkout Session and current subscription
+directly with Stripe before deterministically issuing and activating a license.
+Only token and license hashes are stored by the hosted service; losing the
+pre-payment screen no longer strands a paid customer without an activation key.
 Each unauthenticated checkout receives an isolated billing account even when its
 email matches an existing subscriber, so email knowledge cannot attach a new
 license to somebody else's paid entitlement.
@@ -153,8 +157,9 @@ sequence prevents concurrent webhook handlers from committing reconciled
 snapshots out of retrieval order.
 Webhook deduplication and subscription updates are atomic, allowing Stripe to
 retry safely if subscription persistence fails.
-The plugin admin can start this checkout flow and shows the one-time license key
-before redirecting to Stripe; it does not save that key locally.
+The plugin temporarily retains the checkout recovery tuple and, only between
+successful recovery and activation, the issued license. Both are removed after
+activation and expire with the Checkout recovery window.
 
 Eligible means the server-side subscription is `active` or `trialing`, payment
 collection is not paused, and Stripe supplied a valid future paid-through date.

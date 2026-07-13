@@ -27,10 +27,13 @@ function isEligibleSubscription(subscription, now = new Date()) {
 }
 
 function buildEntitlement(subscription, priceMap = {}, now = new Date()) {
+  const plan = planFromPrice(subscription && subscription.price_id, priceMap);
+  const configuredPrices = [priceMap.monthly, priceMap.yearly].filter(Boolean);
+  const recognizedPrice = configuredPrices.length === 0 || ['monthly', 'yearly'].includes(plan);
   return {
-    eligible: isEligibleSubscription(subscription, now),
+    eligible: recognizedPrice && isEligibleSubscription(subscription, now),
     status: String(subscription && subscription.status ? subscription.status : 'none'),
-    plan: planFromPrice(subscription && subscription.price_id, priceMap),
+    plan,
     current_period_end: toIso(subscription && subscription.current_period_end)
   };
 }

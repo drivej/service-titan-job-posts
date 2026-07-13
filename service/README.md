@@ -8,7 +8,8 @@ WordPress whether a subscription is valid.
 ## Responsibilities
 
 - Activate a license for a normalized site origin.
-- Store only hashes of license keys and activation tokens.
+- Store only hashes of license keys, checkout recovery tokens, and activation
+  tokens.
 - Create Stripe Checkout sessions with server-configured monthly/yearly prices.
 - Isolate every unauthenticated checkout in a new billing account, so knowledge
   of an existing subscriber's email cannot mint a license against their paid
@@ -45,10 +46,14 @@ appearing in sync claims.
 
 Billing endpoints:
 
-- `POST /v1/billing/checkout` creates an account, a one-time license key, a
-  Stripe customer, and a subscription Checkout Session. The license key is
-  returned once, but it cannot activate a site until Stripe webhooks mark the
-  subscription `active` or `trialing`.
+- `POST /v1/billing/checkout` creates an isolated account, unissued license,
+  Stripe customer, subscription Checkout Session, and 24-hour recovery token
+  bound to the requesting WordPress origin and installation. It returns the
+  token once, but no license key before payment.
+- `POST /v1/billing/checkout/recover` verifies the bound Checkout Session and
+  current subscription directly with Stripe, then deterministically reissues
+  the same recoverable license without storing its plaintext. Recovery remains
+  fail-closed until Stripe reports an eligible monthly or yearly subscription.
 - `POST /v1/billing/portal` creates a Stripe Billing Portal session using either
   a license key or a connected site's bearer activation token.
 
@@ -147,5 +152,6 @@ npm test
 ```
 
 CI also applies every migration to a disposable PostgreSQL 16 database and runs
-`npm run test:postgres`, covering claim-bound run reports against the production
-store rather than only the in-memory test store.
+`npm run test:postgres`, covering claim-bound run reports, concurrent singleton
+claims, and checkout recovery against the production store rather than only the
+in-memory test store.

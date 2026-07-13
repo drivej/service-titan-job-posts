@@ -29,3 +29,25 @@ test('Stripe subscription reconciliation uses authenticated GET without a reques
   assert.match(calls[0].options.headers.Authorization, /^Basic /);
   assert.throws(() => client.retrieveSubscription('../customers'), /Stripe subscription ID is invalid/);
 });
+
+test('Stripe Checkout recovery retrieves only well-formed session IDs', async () => {
+  const calls = [];
+  const client = new StripeApiClient({
+    secretKey: 'sk_test_checkout',
+    fetch: async (url, options) => {
+      calls.push({ url, options });
+      return {
+        ok: true,
+        async json() {
+          return { id: 'cs_test_recover', mode: 'subscription', status: 'complete' };
+        }
+      };
+    }
+  });
+
+  const session = await client.retrieveCheckoutSession('cs_test_recover');
+  assert.equal(session.id, 'cs_test_recover');
+  assert.equal(calls[0].options.method, 'GET');
+  assert.equal(Object.hasOwn(calls[0].options, 'body'), false);
+  assert.throws(() => client.retrieveCheckoutSession('../sessions'), /Checkout Session ID is invalid/);
+});

@@ -31,6 +31,7 @@ class MemoryStore {
     this.subscriptions = new Map();
     this.sites = new Map();
     this.connections = new Map();
+    this.checkoutRecoveries = new Map();
     this.webhookEvents = new Set();
     this.stripeReconciliationSequence = 0;
 
@@ -56,6 +57,9 @@ class MemoryStore {
     }
     for (const connection of seed.connections || []) {
       this.connections.set(connection.site_id, { ...connection });
+    }
+    for (const recovery of seed.checkoutRecoveries || []) {
+      this.checkoutRecoveries.set(recovery.id, { ...recovery });
     }
   }
 
@@ -119,6 +123,15 @@ class MemoryStore {
     };
 
     this.sites.set(siteId, record);
+    const recovery = [...this.checkoutRecoveries.values()].find((candidate) =>
+      candidate.license_id === license.id &&
+      candidate.installation_id === input.installation_id &&
+      candidate.site_url === input.site_url
+    );
+    if (recovery) {
+      recovery.completed_at = nowIso(now);
+      recovery.updated_at = recovery.completed_at;
+    }
 
     return {
       site: clone(record),
@@ -147,7 +160,7 @@ class MemoryStore {
     };
     this.accounts.set(account.id, account);
 
-    const licenseKey = randomSecret('lic', 24).toUpperCase();
+    const licenseKey = randomSecret('unissued', 24).toUpperCase();
     const license = {
       id: randomSecret('licrec', 16),
       account_id: account.id,
@@ -160,11 +173,61 @@ class MemoryStore {
     };
     this.licenses.set(license.id, license);
 
+    const recovery = {
+      id: input.recovery_id,
+      checkout_session_id: null,
+      account_id: account.id,
+      license_id: license.id,
+      token_hash: input.recovery_token_hash,
+      installation_id: input.installation_id,
+      site_url: input.site_url,
+      expires_at: nowIso(input.recovery_expires_at),
+      completed_at: null,
+      created_at: nowIso(now),
+      updated_at: nowIso(now)
+    };
+    this.checkoutRecoveries.set(recovery.id, recovery);
+
     return {
       account: clone(account),
       license: clone(license),
-      license_key: licenseKey
+      recovery: clone(recovery)
     };
+  }
+
+  async attachCheckoutSession(recoveryId, sessionId, context) {
+    const recovery = this.checkoutRecoveries.get(recoveryId);
+    if (!recovery) throw serviceError(404, 'checkout_recovery_unavailable', 'Checkout recovery is unavailable.');
+    recovery.checkout_session_id = sessionId;
+    recovery.updated_at = nowIso(context.now || new Date());
+    return clone(recovery);
+  }
+
+  async checkoutRecoveryFor(input, context) {
+    const now = context.now instanceof Date ? context.now : new Date(context.now || Date.now());
+    const recovery = [...this.checkoutRecoveries.values()].find((candidate) =>
+      candidate.checkout_session_id === input.checkout_session_id &&
+      candidate.token_hash === input.token_hash &&
+      candidate.installation_id === input.installation_id &&
+      candidate.site_url === input.site_url &&
+      !candidate.completed_at &&
+      new Date(candidate.expires_at) > now
+    );
+    if (!recovery) return null;
+    const account = this.accounts.get(recovery.account_id);
+    const license = this.licenses.get(recovery.license_id);
+    return account && license ? clone({ ...recovery, stripe_customer_id: account.stripe_customer_id }) : null;
+  }
+
+  async rotateLicenseForRecovery(recoveryId, keyHash, keyLast4, context) {
+    const recovery = this.checkoutRecoveries.get(recoveryId);
+    if (!recovery || recovery.completed_at) return null;
+    const license = this.licenses.get(recovery.license_id);
+    if (!license || license.active === false) return null;
+    license.key_hash = keyHash;
+    license.key_last4 = keyLast4;
+    license.updated_at = nowIso(context.now || new Date());
+    return clone(license);
   }
 
   async attachStripeCustomer(accountId, stripeCustomerId, context) {
@@ -454,7 +517,8 @@ class MemoryStore {
       licenses: [...this.licenses.values()],
       subscriptions: [...this.subscriptions.values()],
       sites: [...this.sites.values()],
-      connections: [...this.connections.values()]
+      connections: [...this.connections.values()],
+      checkoutRecoveries: [...this.checkoutRecoveries.values()]
     });
   }
 }

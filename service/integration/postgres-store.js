@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict');
 const { Pool } = require('pg');
 
-const { encryptText } = require('../src/crypto');
+const { encryptText, licenseHash, sha256Hex } = require('../src/crypto');
 const { ServiceError } = require('../src/errors');
 const { PostgresStore } = require('../src/store/postgres-store');
 
@@ -27,6 +27,7 @@ async function main() {
   const secondSiteId = `site_pg_second_${token}`;
   const initialTime = new Date('2026-07-07T12:00:00.000Z');
   const currentClaim = `claim_current_${token}`;
+  let recoveryAccountId = '';
 
   try {
     await pool.query(
@@ -290,8 +291,81 @@ async function main() {
     });
     assert.equal(laterRunClaims.length, 1);
 
-    console.log('PostgreSQL claim-bound reporting and singleton batching integration passed.');
+    const recoveryToken = `recover_${'a'.repeat(43)}_${token}`;
+    const recoveryId = `recovery_pg_${token}`;
+    const recoverySessionId = `cs_test_${token}`;
+    const recoverySiteUrl = `https://recovery-${token}.example`;
+    const recoveryInstallationId = `recovery-install-${token}`;
+    const recoveryContext = {
+      now: new Date('2026-07-07T12:30:00.000Z'),
+      defaultSiteLimit: 1,
+      encryptionKey,
+      priceMap: { monthly: 'price_monthly', yearly: 'price_yearly' }
+    };
+    const recoveryBilling = await store.createBillingAccount({
+      email: `recovery-${token}@example.test`,
+      site_limit: 1,
+      recovery_id: recoveryId,
+      recovery_token_hash: sha256Hex(recoveryToken),
+      recovery_expires_at: new Date('2026-07-08T12:30:00.000Z'),
+      installation_id: recoveryInstallationId,
+      site_url: recoverySiteUrl
+    }, recoveryContext);
+    recoveryAccountId = recoveryBilling.account.id;
+    await store.attachStripeCustomer(recoveryAccountId, `cus_recovery_${token}`, recoveryContext);
+    await store.attachCheckoutSession(recoveryId, recoverySessionId, recoveryContext);
+
+    const recovery = await store.checkoutRecoveryFor({
+      checkout_session_id: recoverySessionId,
+      token_hash: sha256Hex(recoveryToken),
+      installation_id: recoveryInstallationId,
+      site_url: recoverySiteUrl
+    }, recoveryContext);
+    assert.equal(recovery.id, recoveryId);
+    assert.equal(await store.checkoutRecoveryFor({
+      checkout_session_id: recoverySessionId,
+      token_hash: sha256Hex('wrong-token'),
+      installation_id: recoveryInstallationId,
+      site_url: recoverySiteUrl
+    }, recoveryContext), null);
+
+    const recoveredLicenseKey = `LIC_${'B'.repeat(48)}`;
+    const rotatedLicense = await store.rotateLicenseForRecovery(
+      recoveryId,
+      licenseHash(recoveredLicenseKey),
+      recoveredLicenseKey.slice(-4),
+      recoveryContext
+    );
+    assert.equal(rotatedLicense.key_hash, licenseHash(recoveredLicenseKey));
+    await store.applyStripeSubscription({
+      account_id: recoveryAccountId,
+      stripe_subscription_id: `sub_recovery_${token}`,
+      stripe_customer_id: `cus_recovery_${token}`,
+      status: 'active',
+      price_id: 'price_monthly',
+      current_period_end: new Date('2026-08-01T00:00:00.000Z'),
+      cancel_at_period_end: false,
+      stripe_reconciliation_sequence: await store.nextStripeReconciliationSequence()
+    }, recoveryContext);
+    await store.activateSite({
+      license_key_hash: licenseHash(recoveredLicenseKey),
+      site_url: recoverySiteUrl,
+      installation_id: recoveryInstallationId,
+      delivery_url: `${recoverySiteUrl}/wp-json/st-sync/v1/jobs`,
+      plugin_version: 'test',
+      policy: {}
+    }, recoveryContext);
+    const completedRecovery = await pool.query(
+      'SELECT completed_at FROM checkout_recoveries WHERE id = $1',
+      [recoveryId]
+    );
+    assert.ok(completedRecovery.rows[0].completed_at);
+
+    console.log('PostgreSQL claim, batching, and checkout recovery integration passed.');
   } finally {
+    if (recoveryAccountId) {
+      await pool.query('DELETE FROM accounts WHERE id = $1', [recoveryAccountId]);
+    }
     await pool.query('DELETE FROM accounts WHERE id = $1', [accountId]);
     await pool.end();
   }

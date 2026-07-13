@@ -26,14 +26,42 @@ class ST_Sync_Service_Client
         }
 
         $response = $this->request('POST', '/v1/billing/checkout', [
-            'email' => $normalized_email,
-            'plan'  => $normalized_plan,
+            'email'           => $normalized_email,
+            'plan'            => $normalized_plan,
+            'installation_id' => $this->installation_id(),
+            'site_url'        => home_url('/'),
         ]);
         if (is_wp_error($response)) {
             return $response;
         }
 
-        if (empty($response['checkout_url']) || empty($response['license_key'])) {
+        $required = ['checkout_url', 'checkout_session_id', 'recovery_token', 'recovery_expires_at'];
+        foreach ($required as $key) {
+            if (empty($response[$key])) {
+                return new WP_Error('st_sync_invalid_checkout', 'The hosted service returned an incomplete checkout response.');
+            }
+        }
+
+        return $response;
+    }
+
+    /**
+     * Exchange a completed, installation-bound Stripe session for its license.
+     *
+     * @return array|WP_Error
+     */
+    public function recover_checkout(array $pending)
+    {
+        $response = $this->request('POST', '/v1/billing/checkout/recover', [
+            'checkout_session_id' => sanitize_text_field((string) ($pending['checkout_session_id'] ?? '')),
+            'recovery_token'      => sanitize_text_field((string) ($pending['recovery_token'] ?? '')),
+            'installation_id'     => $this->installation_id(),
+            'site_url'            => home_url('/'),
+        ]);
+        if (is_wp_error($response)) {
+            return $response;
+        }
+        if (empty($response['license_key'])) {
             return new WP_Error('st_sync_invalid_checkout', 'The hosted service returned an incomplete checkout response.');
         }
 
@@ -45,11 +73,7 @@ class ST_Sync_Service_Client
      */
     public function activate(string $license_key)
     {
-        $installation_id = (string) get_option('st_sync_installation_id', '');
-        if ('' === $installation_id) {
-            $installation_id = wp_generate_uuid4();
-            update_option('st_sync_installation_id', $installation_id, false);
-        }
+        $installation_id = $this->installation_id();
 
         $response = $this->request('POST', '/v1/licenses/activate', [
             'license_key'    => trim($license_key),
@@ -178,6 +202,16 @@ class ST_Sync_Service_Client
     {
         $site = get_option('st_sync_site', []);
         return is_array($site) ? $site : [];
+    }
+
+    public function installation_id(): string
+    {
+        $installation_id = (string) get_option('st_sync_installation_id', '');
+        if ('' === $installation_id) {
+            $installation_id = wp_generate_uuid4();
+            update_option('st_sync_installation_id', $installation_id, false);
+        }
+        return $installation_id;
     }
 
     public function is_connected(): bool

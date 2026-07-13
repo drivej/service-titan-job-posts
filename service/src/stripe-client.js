@@ -74,6 +74,14 @@ class StripeApiClient {
     return this.request('/v1/billing_portal/sessions', values);
   }
 
+  retrieveCheckoutSession(sessionId) {
+    const id = String(sessionId || '').trim();
+    if (!/^cs_[A-Za-z0-9_]+$/.test(id)) {
+      throw serviceError(400, 'invalid_stripe_checkout_session', 'Stripe Checkout Session ID is invalid.');
+    }
+    return this.request(`/v1/checkout/sessions/${encodeURIComponent(id)}`, {}, 'GET');
+  }
+
   retrieveSubscription(subscriptionId) {
     const id = String(subscriptionId || '').trim();
     if (!/^sub_[A-Za-z0-9_]+$/.test(id)) {

@@ -14,6 +14,7 @@ class ST_Sync_Admin
         add_action('admin_menu', [$this, 'add_plugin_admin_menu']);
         add_action('admin_init', [$this, 'register_st_settings']);
         add_action('admin_post_st_sync_checkout', [$this, 'start_checkout']);
+        add_action('admin_post_st_sync_recover_checkout', [$this, 'recover_checkout']);
         add_action('admin_post_st_sync_activate', [$this, 'activate_site']);
         add_action('admin_post_st_sync_connect', [$this, 'connect_servicetitan']);
         add_action('admin_post_st_sync_refresh', [$this, 'refresh_status']);
@@ -200,8 +201,18 @@ class ST_Sync_Admin
                     <?php esc_html_e('This build does not have a hosted service URL configured.', 'service-titan-job-post'); ?>
                 </p></div>
             <?php elseif (! $connected) : ?>
+                <?php $pending_checkout = $this->pending_checkout(); ?>
+                <?php if (! empty($pending_checkout) || '' !== $this->pending_license()) : ?>
+                    <h2><?php esc_html_e('Complete subscription setup', 'service-titan-job-post'); ?></h2>
+                    <p><?php esc_html_e('After completing Stripe checkout, securely recover this installation’s activation credential and connect the site.', 'service-titan-job-post'); ?></p>
+                    <form action="<?php echo esc_url(admin_url('admin-post.php')); ?>" method="post">
+                        <input type="hidden" name="action" value="st_sync_recover_checkout">
+                        <?php wp_nonce_field('st_sync_recover_checkout'); ?>
+                        <?php submit_button(__('Complete setup', 'service-titan-job-post'), 'primary'); ?>
+                    </form>
+                <?php endif; ?>
                 <h2><?php esc_html_e('Start subscription', 'service-titan-job-post'); ?></h2>
-                <p><?php esc_html_e('Create a monthly or yearly subscription, then return with the issued license key to activate this site.', 'service-titan-job-post'); ?></p>
+                <p><?php esc_html_e('Create a monthly or yearly subscription. This installation keeps a short-lived recovery token so you can activate after payment without copying a license key.', 'service-titan-job-post'); ?></p>
                 <form action="<?php echo esc_url(admin_url('admin-post.php')); ?>" method="post">
                     <input type="hidden" name="action" value="st_sync_checkout">
                     <?php wp_nonce_field('st_sync_checkout'); ?>
@@ -270,14 +281,59 @@ class ST_Sync_Admin
 
         $checkout_url = esc_url_raw((string) ($result['checkout_url'] ?? ''));
         $scheme = (string) wp_parse_url($checkout_url, PHP_URL_SCHEME);
-        $license_key = sanitize_text_field((string) ($result['license_key'] ?? ''));
-        if ('https' !== $scheme || '' === $license_key) {
+        $pending = [
+            'checkout_session_id' => sanitize_text_field((string) ($result['checkout_session_id'] ?? '')),
+            'recovery_token'      => sanitize_text_field((string) ($result['recovery_token'] ?? '')),
+            'recovery_expires_at' => sanitize_text_field((string) ($result['recovery_expires_at'] ?? '')),
+        ];
+        if ('https' !== $scheme || in_array('', $pending, true)) {
             $this->set_notice('error', __('The hosted service returned an invalid checkout response.', 'service-titan-job-post'));
             wp_safe_redirect(admin_url('admin.php?page=st-sync-settings'));
             exit;
         }
+        update_option('st_sync_pending_checkout', $pending, false);
+        delete_option('st_sync_pending_license');
 
-        $this->render_checkout_interstitial($license_key, $checkout_url);
+        $this->render_checkout_interstitial($checkout_url);
+    }
+
+    public function recover_checkout(): void
+    {
+        $this->authorize_action('st_sync_recover_checkout');
+        $client = new ST_Sync_Service_Client();
+        $license_key = $this->pending_license();
+
+        if ('' === $license_key) {
+            $pending = $this->pending_checkout();
+            if (empty($pending)) {
+                $this->redirect_with_result(
+                    new WP_Error('st_sync_checkout_missing', __('No recoverable checkout is available. Start a new checkout or enter an existing license key.', 'service-titan-job-post')),
+                    ''
+                );
+            }
+            $recovered = $client->recover_checkout($pending);
+            if (is_wp_error($recovered)) {
+                $this->redirect_with_result($recovered, '');
+            }
+            $license_key = sanitize_text_field((string) ($recovered['license_key'] ?? ''));
+            if ('' === $license_key) {
+                $this->redirect_with_result(
+                    new WP_Error('st_sync_checkout_recovery_failed', __('The hosted service did not return an activation credential.', 'service-titan-job-post')),
+                    ''
+                );
+            }
+            update_option('st_sync_pending_license', [
+                'license_key' => $license_key,
+                'expires_at'  => sanitize_text_field((string) ($pending['recovery_expires_at'] ?? '')),
+            ], false);
+        }
+
+        $activated = $client->activate($license_key);
+        if (! is_wp_error($activated)) {
+            delete_option('st_sync_pending_checkout');
+            delete_option('st_sync_pending_license');
+        }
+        $this->redirect_with_result($activated, __('Subscription recovered and site activated.', 'service-titan-job-post'));
     }
 
     public function activate_site(): void
@@ -285,6 +341,10 @@ class ST_Sync_Admin
         $this->authorize_action('st_sync_activate');
         $license_key = isset($_POST['license_key']) ? trim((string) wp_unslash($_POST['license_key'])) : '';
         $result = (new ST_Sync_Service_Client())->activate($license_key);
+        if (! is_wp_error($result)) {
+            delete_option('st_sync_pending_checkout');
+            delete_option('st_sync_pending_license');
+        }
         $this->redirect_with_result($result, __('Site activated.', 'service-titan-job-post'));
     }
 
@@ -1055,17 +1115,15 @@ class ST_Sync_Admin
             : self::defaults()['jobs_since'];
     }
 
-    private function render_checkout_interstitial(string $license_key, string $checkout_url): void
+    private function render_checkout_interstitial(string $checkout_url): void
     {
         require_once ABSPATH . 'wp-admin/admin-header.php';
         ?>
         <div class="wrap">
             <h1><?php esc_html_e('Continue to subscription checkout', 'service-titan-job-post'); ?></h1>
-            <div class="notice notice-warning inline"><p>
-                <?php esc_html_e('Copy this license key before continuing. The plugin does not store it in WordPress, and you will need it after checkout completes.', 'service-titan-job-post'); ?>
+            <div class="notice notice-info inline"><p>
+                <?php esc_html_e('This installation saved a short-lived, checkout-specific recovery token. No license key needs to be copied before payment.', 'service-titan-job-post'); ?>
             </p></div>
-            <p><label for="st-issued-license-key"><strong><?php esc_html_e('License key', 'service-titan-job-post'); ?></strong></label></p>
-            <p><input id="st-issued-license-key" type="text" class="large-text code" readonly value="<?php echo esc_attr($license_key); ?>" onclick="this.select();"></p>
             <p>
                 <a class="button button-primary button-hero" href="<?php echo esc_url($checkout_url); ?>">
                     <?php esc_html_e('Continue to secure checkout', 'service-titan-job-post'); ?>
@@ -1075,12 +1133,42 @@ class ST_Sync_Admin
                 </a>
             </p>
             <p class="description">
-                <?php esc_html_e('After the Stripe subscription is active, paste this license key into the activation form on this settings page.', 'service-titan-job-post'); ?>
+                <?php esc_html_e('After payment, return to Local Jobs Sync and choose Complete setup. The hosted service verifies Stripe before issuing and activating the credential.', 'service-titan-job-post'); ?>
             </p>
         </div>
         <?php
         require_once ABSPATH . 'wp-admin/admin-footer.php';
         exit;
+    }
+
+    private function pending_checkout(): array
+    {
+        $pending = get_option('st_sync_pending_checkout', []);
+        if (! is_array($pending)) {
+            return [];
+        }
+        $expires = strtotime((string) ($pending['recovery_expires_at'] ?? ''));
+        if (false === $expires || $expires <= time()) {
+            delete_option('st_sync_pending_checkout');
+            return [];
+        }
+        return $pending;
+    }
+
+    private function pending_license(): string
+    {
+        $pending = get_option('st_sync_pending_license', []);
+        if (! is_array($pending)) {
+            delete_option('st_sync_pending_license');
+            return '';
+        }
+        $expires = strtotime((string) ($pending['expires_at'] ?? ''));
+        $license_key = sanitize_text_field((string) ($pending['license_key'] ?? ''));
+        if (false === $expires || $expires <= time() || '' === $license_key) {
+            delete_option('st_sync_pending_license');
+            return '';
+        }
+        return $license_key;
     }
 
     private function pending_job_update(int $post_id): array

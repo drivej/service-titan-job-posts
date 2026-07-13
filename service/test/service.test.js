@@ -5,7 +5,7 @@ const test = require('node:test');
 
 const { handleRoute } = require('../src/app');
 const { licenseHash } = require('../src/crypto');
-const { isEligibleSubscription } = require('../src/entitlements');
+const { buildEntitlement, isEligibleSubscription } = require('../src/entitlements');
 const { ServiceError } = require('../src/errors');
 const { MemoryStore } = require('../src/store/memory-store');
 const { stripeSignatureHeader } = require('../src/stripe');
@@ -217,6 +217,7 @@ test('checkout creates a license but activation stays blocked until Stripe marks
   const store = new MemoryStore();
   const stripeCalls = [];
   let currentStripeSubscription = null;
+  let currentCheckoutSession = null;
   const stripeClient = {
     async createCustomer(values) {
       stripeCalls.push(['customer', values]);
@@ -229,6 +230,10 @@ test('checkout creates a license but activation stays blocked until Stripe marks
     async retrieveSubscription(subscriptionId) {
       assert.equal(subscriptionId, 'sub_checkout');
       return currentStripeSubscription;
+    },
+    async retrieveCheckoutSession(sessionId) {
+      assert.equal(sessionId, 'cs_123');
+      return currentCheckoutSession;
     }
   };
 
@@ -238,12 +243,16 @@ test('checkout creates a license but activation stays blocked until Stripe marks
       body: {
         email: 'Owner@Example.com',
         plan: 'yearly',
+        installation_id: 'wp-install-1',
+        site_url: 'https://example.com',
         success_url: 'https://attacker.example/success'
       }
     });
 
     assert.equal(checkout.response.status, 201);
-    assert.match(checkout.json.license_key, /^LIC_/);
+    assert.equal(checkout.json.license_key, undefined);
+    assert.match(checkout.json.recovery_token, /^recover_/);
+    assert.equal(checkout.json.checkout_session_id, 'cs_123');
     assert.equal(checkout.json.checkout_url, 'https://checkout.stripe.test/cs_123');
     assert.equal(stripeCalls[0][1].email, 'owner@example.com');
     assert.equal(stripeCalls[1][1].mode, 'subscription');
@@ -252,18 +261,37 @@ test('checkout creates a license but activation stays blocked until Stripe marks
     assert.notEqual(stripeCalls[1][1].success_url, 'https://attacker.example/success');
 
     const persistedBeforeWebhook = JSON.stringify(store.dump());
-    assert.equal(persistedBeforeWebhook.includes(checkout.json.license_key), false);
+    assert.equal(persistedBeforeWebhook.includes(checkout.json.recovery_token), false);
 
-    const blockedActivation = await request('/v1/licenses/activate', {
+    const wrongRecovery = await request('/v1/billing/checkout/recover', {
       method: 'POST',
       body: {
-        license_key: checkout.json.license_key,
+        checkout_session_id: checkout.json.checkout_session_id,
+        recovery_token: `recover_${'z'.repeat(43)}`,
         site_url: 'https://example.com',
-        installation_id: 'wp-install-1',
-        delivery_url: 'https://example.com/wp-json/st-sync/v1/jobs'
+        installation_id: 'wp-install-1'
       }
     });
-    assert.equal(blockedActivation.response.status, 402);
+    assert.equal(wrongRecovery.response.status, 404);
+
+    currentCheckoutSession = {
+      id: 'cs_123',
+      mode: 'subscription',
+      status: 'open',
+      customer: 'cus_checkout',
+      subscription: null,
+      metadata: stripeCalls[1][1].metadata
+    };
+    const blockedRecovery = await request('/v1/billing/checkout/recover', {
+      method: 'POST',
+      body: {
+        checkout_session_id: checkout.json.checkout_session_id,
+        recovery_token: checkout.json.recovery_token,
+        site_url: 'https://example.com',
+        installation_id: 'wp-install-1'
+      }
+    });
+    assert.equal(blockedRecovery.response.status, 409);
 
     const accountId = store.dump().accounts[0].id;
     const event = {
@@ -298,10 +326,42 @@ test('checkout creates a license but activation stays blocked until Stripe marks
     });
     assert.equal(webhook.response.status, 200);
 
+    currentCheckoutSession = {
+      id: 'cs_123',
+      mode: 'subscription',
+      status: 'complete',
+      customer: 'cus_checkout',
+      subscription: 'sub_checkout',
+      metadata: stripeCalls[1][1].metadata
+    };
+    const recovery = await request('/v1/billing/checkout/recover', {
+      method: 'POST',
+      body: {
+        checkout_session_id: checkout.json.checkout_session_id,
+        recovery_token: checkout.json.recovery_token,
+        site_url: 'https://example.com',
+        installation_id: 'wp-install-1'
+      }
+    });
+    assert.equal(recovery.response.status, 200);
+    assert.match(recovery.json.license_key, /^LIC_[A-F0-9]{48}$/);
+    assert.equal(recovery.json.entitlement.eligible, true);
+
+    const retriedRecovery = await request('/v1/billing/checkout/recover', {
+      method: 'POST',
+      body: {
+        checkout_session_id: checkout.json.checkout_session_id,
+        recovery_token: checkout.json.recovery_token,
+        site_url: 'https://example.com',
+        installation_id: 'wp-install-1'
+      }
+    });
+    assert.equal(retriedRecovery.json.license_key, recovery.json.license_key);
+
     const activated = await request('/v1/licenses/activate', {
       method: 'POST',
       body: {
-        license_key: checkout.json.license_key,
+        license_key: recovery.json.license_key,
         site_url: 'https://example.com',
         installation_id: 'wp-install-1',
         delivery_url: 'https://example.com/wp-json/st-sync/v1/jobs'
@@ -310,6 +370,18 @@ test('checkout creates a license but activation stays blocked until Stripe marks
     assert.equal(activated.response.status, 201);
     assert.equal(activated.json.entitlement.eligible, true);
     assert.equal(activated.json.entitlement.plan, 'yearly');
+    assert.equal(JSON.stringify(store.dump()).includes(recovery.json.license_key), false);
+
+    const completedRecovery = await request('/v1/billing/checkout/recover', {
+      method: 'POST',
+      body: {
+        checkout_session_id: checkout.json.checkout_session_id,
+        recovery_token: checkout.json.recovery_token,
+        site_url: 'https://example.com',
+        installation_id: 'wp-install-1'
+      }
+    });
+    assert.equal(completedRecovery.response.status, 404);
   }, { stripeClient });
 });
 
@@ -331,7 +403,9 @@ test('checkout cannot mint a license against an existing subscriber by reusing t
       method: 'POST',
       body: {
         email: 'OWNER@example.test',
-        plan: 'monthly'
+        plan: 'monthly',
+        installation_id: 'wp-install-isolated',
+        site_url: 'https://new-site.example'
       }
     });
 
@@ -339,18 +413,10 @@ test('checkout cannot mint a license against an existing subscriber by reusing t
     assert.equal(stripeCustomers.length, 1);
     assert.equal(store.dump().accounts.length, 2);
 
-    const activation = await request('/v1/licenses/activate', {
-      method: 'POST',
-      body: {
-        license_key: checkout.json.license_key,
-        site_url: 'https://new-site.example',
-        installation_id: 'wp-install-email-reuse',
-        delivery_url: 'https://new-site.example/wp-json/st-sync/v1/jobs'
-      }
-    });
-
-    assert.equal(activation.response.status, 402);
-    assert.equal(activation.json.code, 'subscription_required');
+    assert.equal(checkout.json.license_key, undefined);
+    const newAccount = store.dump().accounts.find((account) => account.stripe_customer_id === 'cus_isolated_checkout');
+    assert.notEqual(newAccount.id, 'acct_1');
+    assert.equal(store.dump().subscriptions.some((subscription) => subscription.account_id === newAccount.id), false);
   }, { stripeClient });
 });
 
@@ -418,6 +484,11 @@ test('subscription entitlement requires an unpaused status and a valid future pa
   assert.equal(isEligibleSubscription({ status: 'active', current_period_end: '' }, FIXED_NOW), false);
   assert.equal(isEligibleSubscription({ status: 'trialing', current_period_end: 'invalid' }, FIXED_NOW), false);
   assert.equal(isEligibleSubscription({ status: 'paused', current_period_end: future }, FIXED_NOW), false);
+  assert.equal(buildEntitlement({
+    status: 'active',
+    price_id: 'price_unrecognized',
+    current_period_end: future
+  }, { monthly: 'price_monthly', yearly: 'price_yearly' }, FIXED_NOW).eligible, false);
 });
 
 test('non-reconciled equal-timestamp updates keep the fail-closed subscription state', async () => {

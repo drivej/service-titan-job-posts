@@ -1,13 +1,15 @@
 'use strict';
 
 const { createConfig } = require('./config');
-const { licenseHash, normalizeSiteOrigin, sha256Hex, timingSafeEqualString } = require('./crypto');
+const { hmacSha256Hex, licenseHash, normalizeSiteOrigin, randomSecret, sha256Hex, timingSafeEqualString } = require('./crypto');
+const { buildEntitlement } = require('./entitlements');
 const { ServiceError, serviceError } = require('./errors');
 const { StripeApiClient } = require('./stripe-client');
 const { subscriptionFromStripeObject, verifyStripeSignature } = require('./stripe');
 
 const JSON_LIMIT_BYTES = 1024 * 1024;
 const SYNC_CLAIM_RUN_MAX_AGE_MS = 2 * 60 * 60 * 1000;
+const CHECKOUT_RECOVERY_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const POLICY_KEYS = new Set([
   'min_price',
   'jobs_since',
@@ -20,11 +22,12 @@ const POLICY_KEYS = new Set([
 ]);
 const SYNC_RUN_STATUSES = new Set(['success', 'failed']);
 
-function jsonResponse(response, status, payload) {
+function jsonResponse(response, status, payload, headers = {}) {
   const body = JSON.stringify(payload);
   response.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
-    'Content-Length': Buffer.byteLength(body)
+    'Content-Length': Buffer.byteLength(body),
+    ...headers
   });
   response.end(body);
 }
@@ -68,6 +71,46 @@ function sanitizeEmail(value) {
     throw serviceError(400, 'invalid_email', 'A valid customer email is required.');
   }
   return email;
+}
+
+function sanitizeCheckoutSite(input) {
+  const installationId = String(input.installation_id || '').trim();
+  if (!installationId || installationId.length > 200) {
+    throw serviceError(400, 'invalid_checkout_site', 'installation_id is required.');
+  }
+  let siteUrl;
+  try {
+    siteUrl = normalizeSiteOrigin(input.site_url);
+  } catch (error) {
+    throw serviceError(400, 'invalid_checkout_site', 'site_url must be a valid http or https URL.');
+  }
+  const parsed = new URL(siteUrl);
+  const localHost = ['localhost', '127.0.0.1', '::1'].includes(parsed.hostname);
+  if (parsed.protocol !== 'https:' && !localHost) {
+    throw serviceError(400, 'invalid_checkout_site', 'site_url must use HTTPS outside local development.');
+  }
+  return { installation_id: installationId, site_url: siteUrl };
+}
+
+function sanitizeCheckoutRecovery(input) {
+  const checkoutSessionId = String(input.checkout_session_id || '').trim();
+  const recoveryToken = String(input.recovery_token || '').trim();
+  if (!/^cs_[A-Za-z0-9_]+$/.test(checkoutSessionId) || !/^recover_[A-Za-z0-9_-]{32,}$/.test(recoveryToken)) {
+    throw serviceError(404, 'checkout_recovery_unavailable', 'Checkout recovery is unavailable.');
+  }
+  return {
+    ...sanitizeCheckoutSite(input),
+    checkout_session_id: checkoutSessionId,
+    recovery_token: recoveryToken
+  };
+}
+
+function recoveryLicenseKey(encryptionKey, checkoutSessionId, recoveryToken) {
+  const digest = hmacSha256Hex(
+    encryptionKey,
+    `service-titan-job-post:checkout-license:v1\0${checkoutSessionId}\0${recoveryToken}`
+  );
+  return `LIC_${digest.slice(0, 48).toUpperCase()}`;
 }
 
 function configuredUrl(value, fallback, code) {
@@ -324,13 +367,21 @@ async function handleRoute(request, rawBody, body, dependencies) {
 
   if (request.method === 'POST' && url.pathname === '/v1/billing/checkout') {
     const email = sanitizeEmail(body.email);
+    const checkoutSite = sanitizeCheckoutSite(body);
     const { plan, priceId } = planPriceId(body.plan, config);
     const successUrl = configuredUrl(config.stripeCheckoutSuccessUrl, '', 'checkout_success_url_not_configured');
     const cancelUrl = configuredUrl(config.stripeCheckoutCancelUrl, '', 'checkout_cancel_url_not_configured');
 
+    const recoveryToken = randomSecret('recover', 32);
+    const recoveryId = randomSecret('recovery', 16);
+    const recoveryExpiresAt = new Date(context.now.getTime() + CHECKOUT_RECOVERY_MAX_AGE_MS);
     const billing = await store.createBillingAccount({
       email,
-      site_limit: config.siteLimitDefault
+      site_limit: config.siteLimitDefault,
+      recovery_id: recoveryId,
+      recovery_token_hash: sha256Hex(recoveryToken),
+      recovery_expires_at: recoveryExpiresAt,
+      ...checkoutSite
     }, context);
 
     let stripeCustomerId = billing.account.stripe_customer_id || '';
@@ -365,18 +416,92 @@ async function handleRoute(request, rawBody, body, dependencies) {
       metadata: {
         account_id: billing.account.id,
         license_id: billing.license.id,
+        recovery_id: recoveryId,
         plan
       }
     });
 
+    if (!session.id || !/^cs_[A-Za-z0-9_]+$/.test(session.id)) {
+      throw serviceError(502, 'invalid_stripe_checkout', 'Stripe returned an invalid Checkout Session.');
+    }
+    await store.attachCheckoutSession(recoveryId, session.id, context);
+
     return {
       status: 201,
+      headers: { 'Cache-Control': 'no-store' },
       payload: {
         checkout_url: session.url,
         checkout_session_id: session.id,
-        license_key: billing.license_key,
+        recovery_token: recoveryToken,
+        recovery_expires_at: recoveryExpiresAt.toISOString(),
         plan
       }
+    };
+  }
+
+  if (request.method === 'POST' && url.pathname === '/v1/billing/checkout/recover') {
+    const recoveryInput = sanitizeCheckoutRecovery(body);
+    const recovery = await store.checkoutRecoveryFor({
+      ...recoveryInput,
+      token_hash: sha256Hex(recoveryInput.recovery_token)
+    }, context);
+    if (!recovery) {
+      throw serviceError(404, 'checkout_recovery_unavailable', 'Checkout recovery is unavailable.');
+    }
+    if (typeof stripeClient.retrieveCheckoutSession !== 'function') {
+      throw serviceError(500, 'stripe_reconciliation_unavailable', 'Stripe checkout verification is unavailable.');
+    }
+    const session = await stripeClient.retrieveCheckoutSession(recoveryInput.checkout_session_id);
+    const metadata = session && session.metadata ? session.metadata : {};
+    const customerId = typeof session.customer === 'string' ? session.customer : session.customer && session.customer.id;
+    const subscriptionId = typeof session.subscription === 'string'
+      ? session.subscription
+      : session.subscription && session.subscription.id;
+    if (
+      !session || session.id !== recovery.checkout_session_id ||
+      session.mode !== 'subscription' || session.status !== 'complete' ||
+      !subscriptionId || customerId !== recovery.stripe_customer_id ||
+      metadata.account_id !== recovery.account_id ||
+      metadata.license_id !== recovery.license_id || metadata.recovery_id !== recovery.id
+    ) {
+      throw serviceError(409, 'checkout_not_ready', 'Checkout is not complete or could not be verified.');
+    }
+
+    const currentSubscription = await stripeClient.retrieveSubscription(subscriptionId);
+    const subscription = subscriptionFromStripeObject(currentSubscription);
+    if (
+      !subscription ||
+      subscription.stripe_subscription_id !== subscriptionId ||
+      subscription.stripe_customer_id !== recovery.stripe_customer_id
+    ) {
+      throw serviceError(503, 'stripe_reconciliation_failed', 'Stripe did not return a current subscription object.');
+    }
+    subscription.account_id = recovery.account_id;
+    subscription.stripe_reconciliation_sequence = await store.nextStripeReconciliationSequence(context);
+    const storedSubscription = await store.applyStripeSubscription(subscription, context);
+    const entitlement = buildEntitlement(storedSubscription, context.priceMap, context.now);
+    if (!entitlement.eligible) {
+      throw serviceError(409, 'checkout_not_ready', 'Subscription activation is still processing. Try again shortly.');
+    }
+
+    const licenseKey = recoveryLicenseKey(
+      config.encryptionKey,
+      recoveryInput.checkout_session_id,
+      recoveryInput.recovery_token
+    );
+    const rotated = await store.rotateLicenseForRecovery(
+      recovery.id,
+      licenseHash(licenseKey),
+      licenseKey.slice(-4),
+      context
+    );
+    if (!rotated) {
+      throw serviceError(410, 'checkout_recovery_unavailable', 'Checkout recovery is unavailable.');
+    }
+    return {
+      status: 200,
+      headers: { 'Cache-Control': 'no-store' },
+      payload: { license_key: licenseKey, entitlement }
     };
   }
 
@@ -605,7 +730,7 @@ function createApp(dependencies) {
       const rawBody = await readRawBody(request);
       const body = rawBody ? parseJson(rawBody) : {};
       const result = await handleRoute(request, rawBody, body, resolved);
-      jsonResponse(response, result.status, result.payload);
+      jsonResponse(response, result.status, result.payload, result.headers);
     } catch (error) {
       const status = error instanceof ServiceError ? error.status : 500;
       const code = error instanceof ServiceError ? error.code : 'internal_error';
@@ -622,8 +747,11 @@ module.exports = {
   normalizeDeliveryUrl,
   planPriceId,
   sanitizeConnection,
+  sanitizeCheckoutRecovery,
+  sanitizeCheckoutSite,
   sanitizeEmail,
   sanitizePolicy,
   sanitizeSyncClaimRequest,
-  sanitizeSyncRun
+  sanitizeSyncRun,
+  recoveryLicenseKey
 };

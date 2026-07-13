@@ -5,7 +5,7 @@ const { buildEntitlement } = require('../entitlements');
 const { serviceError } = require('../errors');
 const { SYNC_CLAIM_LEASE_MS, syncWindowForSite } = require('./sync-window');
 
-const LATEST_MIGRATION = '005_stripe_reconciliation_ordering.sql';
+const LATEST_MIGRATION = '006_checkout_recoveries.sql';
 
 function row(result) {
   return result.rows && result.rows.length > 0 ? result.rows[0] : null;
@@ -144,6 +144,17 @@ class PostgresStore {
         ));
       }
 
+      await client.query(
+        `UPDATE checkout_recoveries
+            SET completed_at = $4,
+                updated_at = $4
+          WHERE license_id = $1
+            AND installation_id = $2
+            AND site_url = $3
+            AND completed_at IS NULL`,
+        [license.id, input.installation_id, input.site_url, context.now]
+      );
+
       return {
         site,
         activation_token: activationToken,
@@ -177,7 +188,7 @@ class PostgresStore {
         [randomSecret('acct', 16), email, context.now]
       ));
 
-      const licenseKey = randomSecret('lic', 24).toUpperCase();
+      const licenseKey = randomSecret('unissued', 24).toUpperCase();
       const license = row(await client.query(
         `INSERT INTO licenses (
            id, account_id, key_hash, key_last4, active, site_limit, created_at, updated_at
@@ -193,11 +204,81 @@ class PostgresStore {
         ]
       ));
 
+      const recovery = row(await client.query(
+        `INSERT INTO checkout_recoveries (
+           id, account_id, license_id, token_hash, installation_id, site_url,
+           expires_at, created_at, updated_at
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8)
+         RETURNING *`,
+        [
+          input.recovery_id,
+          account.id,
+          license.id,
+          input.recovery_token_hash,
+          input.installation_id,
+          input.site_url,
+          input.recovery_expires_at,
+          context.now
+        ]
+      ));
+
       return {
         account,
         license,
-        license_key: licenseKey
+        recovery
       };
+    });
+  }
+
+  async attachCheckoutSession(recoveryId, sessionId, context) {
+    const recovery = row(await this.db.query(
+      `UPDATE checkout_recoveries
+          SET checkout_session_id = $2,
+              updated_at = $3
+        WHERE id = $1 AND completed_at IS NULL
+        RETURNING *`,
+      [recoveryId, sessionId, context.now]
+    ));
+    if (!recovery) throw serviceError(404, 'checkout_recovery_unavailable', 'Checkout recovery is unavailable.');
+    return recovery;
+  }
+
+  async checkoutRecoveryFor(input, context) {
+    return row(await this.db.query(
+      `SELECT r.*, a.stripe_customer_id
+         FROM checkout_recoveries r
+         INNER JOIN accounts a ON a.id = r.account_id
+         INNER JOIN licenses l ON l.id = r.license_id
+        WHERE r.checkout_session_id = $1
+          AND r.token_hash = $2
+          AND r.installation_id = $3
+          AND r.site_url = $4
+          AND r.completed_at IS NULL
+          AND r.expires_at > $5
+          AND l.active = true
+        LIMIT 1`,
+      [input.checkout_session_id, input.token_hash, input.installation_id, input.site_url, context.now]
+    ));
+  }
+
+  async rotateLicenseForRecovery(recoveryId, keyHash, keyLast4, context) {
+    return this.withTransaction(async (client) => {
+      const recovery = row(await client.query(
+        `SELECT * FROM checkout_recoveries
+          WHERE id = $1 AND completed_at IS NULL AND expires_at > $2
+          FOR UPDATE`,
+        [recoveryId, context.now]
+      ));
+      if (!recovery) return null;
+      return row(await client.query(
+        `UPDATE licenses
+            SET key_hash = $2,
+                key_last4 = $3,
+                updated_at = $4
+          WHERE id = $1 AND active = true
+          RETURNING *`,
+        [recovery.license_id, keyHash, keyLast4, context.now]
+      ));
     });
   }
 
