@@ -1,0 +1,82 @@
+name: Daily ServiceTitan sync
+
+on:
+  schedule:
+    - cron: '17 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: service-titan-production-daily-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: production-sync
+    env:
+      DAILY_SYNC_ENABLED: ${{ vars.DAILY_SYNC_ENABLED }}
+
+    steps:
+      - name: Decide whether to run
+        id: gate
+        shell: bash
+        run: |
+          enabled=false
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" || "$DAILY_SYNC_ENABLED" == "true" ]]; then
+            enabled=true
+          fi
+          echo "enabled=$enabled" >> "$GITHUB_OUTPUT"
+          if [[ "$enabled" != "true" ]]; then
+            echo "Daily sync is disabled. Set DAILY_SYNC_ENABLED=true in the production-sync environment to enable scheduled runs." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Validate production sync configuration
+        if: steps.gate.outputs.enabled == 'true'
+        shell: bash
+        env:
+          SERVICE_URL: ${{ vars.ST_SYNC_SERVICE_URL }}
+          WORKER_API_KEY: ${{ secrets.WORKER_API_KEY }}
+          ST_APP_KEY: ${{ secrets.ST_APP_KEY }}
+        run: |
+          if [[ -z "$SERVICE_URL" || "$SERVICE_URL" != https://* ]]; then
+            echo "ST_SYNC_SERVICE_URL must be configured as an HTTPS URL in production-sync." >&2
+            exit 1
+          fi
+          if [[ -z "$WORKER_API_KEY" ]]; then
+            echo "WORKER_API_KEY must be configured in production-sync." >&2
+            exit 1
+          fi
+          if [[ -z "$ST_APP_KEY" ]]; then
+            echo "ST_APP_KEY must be configured in production-sync." >&2
+            exit 1
+          fi
+
+      - name: Checkout
+        if: steps.gate.outputs.enabled == 'true'
+        uses: actions/checkout@v5
+
+      - name: Set up Node
+        if: steps.gate.outputs.enabled == 'true'
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: sevalla/package-lock.json
+
+      - name: Install worker dependencies
+        if: steps.gate.outputs.enabled == 'true'
+        run: npm ci --prefix sevalla
+
+      - name: Import eligible customer jobs
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          SERVICE_URL: ${{ vars.ST_SYNC_SERVICE_URL }}
+          WORKER_API_KEY: ${{ secrets.WORKER_API_KEY }}
+          ST_APP_KEY: ${{ secrets.ST_APP_KEY }}
+          DEV_MODE: 'false'
+          STANDALONE_SYNC: 'false'
+        run: npm start --prefix sevalla

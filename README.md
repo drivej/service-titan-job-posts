@@ -221,9 +221,32 @@ npm test
 npm start
 ```
 
-The worker is intentionally a one-shot process. Schedule `npm start` daily in
-Sevalla, cron, or another job runner. The included Dockerfile runs that same
-one-shot command.
+The worker is intentionally a one-shot process. The **Daily ServiceTitan sync**
+GitHub workflow runs it at 05:17 UTC and also supports manual recovery runs. A
+fixed concurrency group prevents scheduled and manual runs from overlapping,
+while the hosted claim lease remains a second line of protection.
+
+Configure a GitHub environment named `production-sync` without required manual
+approval for scheduled jobs. Set these values there:
+
+- variable `ST_SYNC_SERVICE_URL` — hosted HTTPS service origin;
+- variable `DAILY_SYNC_ENABLED=true` — enables the scheduled run;
+- secret `WORKER_API_KEY` — must match the hosted service worker key;
+- secret `ST_APP_KEY` — ServiceTitan application key.
+
+Until enabled, scheduled workflows exit successfully without loading code or
+secrets. Manual runs bypass the enable flag for setup testing, but fail before
+checkout when required configuration is missing. The job has read-only
+repository permissions, refuses development/standalone modes, exits nonzero if
+any customer site or run report fails, and is bounded to 25 minutes beneath the
+30-minute claim lease.
+
+GitHub failure notifications should be enabled for this workflow. Production
+operations should also monitor the hosted sync-health timestamps externally;
+that catches a scheduler outage that cannot report its own failure. The worker
+can alternatively be scheduled in Sevalla or another cron runner using the same
+environment contract, and the included Dockerfile runs the same one-shot
+command.
 
 Set `DEV_MODE=true` to use `mock-jobs.json` instead of calling ServiceTitan. Dev
 mode still sends the resulting jobs to the configured WordPress site.
