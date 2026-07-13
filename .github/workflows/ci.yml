@@ -91,3 +91,47 @@ jobs:
         env:
           WP_ROOT: ${{ runner.temp }}/wordpress
         run: php tests/wordpress-integration.php
+
+  postgres-integration:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: service_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready --username=postgres --dbname=service_test"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: service/package-lock.json
+
+      - name: Install hosted service dependencies
+        run: npm ci --prefix service
+
+      - name: Apply hosted service migrations
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/service_test
+          PGSSLMODE: disable
+        run: npm run migrate --prefix service
+
+      - name: Run PostgreSQL store integration suite
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/service_test
+          PGSSLMODE: disable
+        run: npm run test:postgres --prefix service

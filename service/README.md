@@ -64,9 +64,10 @@ Worker-facing endpoint:
   WordPress delivery. A denial fails closed without creating a post.
 - `POST /internal/v1/sync/runs` with `Authorization: Bearer <WORKER_API_KEY>`
   records a site's sync result. The worker should echo the `claim_id` it
-  received. Successful runs advance the site's cursor monotonically; failed
-  runs preserve the previous cursor for a safe retry. Matching run reports
-  release the active lease.
+  received. Reports mutate health and cursor state only while that exact claim
+  is still current; stale workers receive `409 stale_sync_claim`. Successful
+  runs advance the site's cursor monotonically, failed runs preserve the
+  previous cursor for a safe retry, and accepted reports release the lease.
 
 Stripe endpoint:
 
@@ -134,3 +135,7 @@ the latest migration has been recorded by `npm run migrate`.
 ```bash
 npm test
 ```
+
+CI also applies every migration to a disposable PostgreSQL 16 database and runs
+`npm run test:postgres`, covering claim-bound run reports against the production
+store rather than only the in-memory test store.

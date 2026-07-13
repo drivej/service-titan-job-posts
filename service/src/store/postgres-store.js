@@ -443,7 +443,9 @@ class PostgresStore {
                 ELSE sync_claimed_until
               END,
               updated_at = $2
-        WHERE id = $1 AND revoked_at IS NULL
+        WHERE id = $1
+          AND revoked_at IS NULL
+          AND sync_claim_id = $7
         RETURNING id, last_successful_sync_at, last_sync_attempt_at,
                   last_sync_status, last_sync_error, last_sync_stats`,
       [
@@ -457,7 +459,14 @@ class PostgresStore {
       ]
     ));
     if (!site) {
-      throw serviceError(404, 'site_not_found', 'Site was not found.');
+      const existing = row(await this.db.query(
+        'SELECT id, revoked_at FROM sites WHERE id = $1',
+        [input.site_id]
+      ));
+      if (!existing || existing.revoked_at) {
+        throw serviceError(404, 'site_not_found', 'Site was not found.');
+      }
+      throw serviceError(409, 'stale_sync_claim', 'Sync run no longer owns the active site claim.');
     }
 
     return {

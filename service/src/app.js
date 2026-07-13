@@ -219,9 +219,10 @@ function connectionStatus(connection) {
 
 function sanitizeSyncRun(input) {
   const siteId = String(input.site_id || '').trim();
+  const claimId = String(input.claim_id || '').trim().slice(0, 120);
   const status = String(input.status || '').trim().toLowerCase();
-  if (!siteId || !SYNC_RUN_STATUSES.has(status)) {
-    throw serviceError(400, 'invalid_sync_run', 'site_id and status of success or failed are required.');
+  if (!siteId || !claimId || !SYNC_RUN_STATUSES.has(status)) {
+    throw serviceError(400, 'invalid_sync_run', 'site_id, claim_id, and status of success or failed are required.');
   }
 
   let processedUntil = null;
@@ -238,7 +239,7 @@ function sanitizeSyncRun(input) {
 
   return {
     site_id: siteId,
-    claim_id: String(input.claim_id || '').trim().slice(0, 120),
+    claim_id: claimId,
     status,
     processed_until: processedUntil,
     stats: sanitizeSyncStats(input.stats),

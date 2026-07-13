@@ -596,6 +596,18 @@ test('sync claims use policy backfill first, then successful runs advance the cu
     });
     assert.equal(unauthorizedRun.response.status, 401);
 
+    const missingClaimRun = await request('/internal/v1/sync/runs', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer worker-secret' },
+      body: {
+        site_id: activation.site_id,
+        status: 'success',
+        processed_until: initialClaim.modified_before
+      }
+    });
+    assert.equal(missingClaimRun.response.status, 400);
+    assert.equal(missingClaimRun.json.code, 'invalid_sync_run');
+
     const successfulRun = await request('/internal/v1/sync/runs', {
       method: 'POST',
       headers: { Authorization: 'Bearer worker-secret' },
@@ -632,11 +644,49 @@ test('sync claims use policy backfill first, then successful runs advance the cu
         site_id: activation.site_id,
         claim_id: 'claim_stale',
         status: 'success',
-        processed_until: '2026-07-01T00:00:00.000Z'
+        processed_until: '2026-07-08T00:00:00.000Z',
+        stats: {
+          imported: 999,
+          filtered: 0,
+          failed: 0
+        }
       }
     });
-    assert.equal(staleSuccessRun.response.status, 200);
-    assert.equal(staleSuccessRun.json.last_successful_sync_at, '2026-07-07T12:00:00.000Z');
+    assert.equal(staleSuccessRun.response.status, 409);
+    assert.equal(staleSuccessRun.json.code, 'stale_sync_claim');
+
+    const staleFailureRun = await request('/internal/v1/sync/runs', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer worker-secret' },
+      body: {
+        site_id: activation.site_id,
+        claim_id: 'claim_stale',
+        status: 'failed',
+        error: 'stale worker failure',
+        stats: { imported: 0, filtered: 0, failed: 999 }
+      }
+    });
+    assert.equal(staleFailureRun.response.status, 409);
+    assert.equal(staleFailureRun.json.code, 'stale_sync_claim');
+
+    const statusAfterStaleReports = await request('/v1/licenses/status', { headers: auth });
+    assert.equal(statusAfterStaleReports.json.sync.last_successful_sync_at, '2026-07-07T12:00:00.000Z');
+    assert.equal(statusAfterStaleReports.json.sync.last_sync_status, 'success');
+    assert.deepEqual(statusAfterStaleReports.json.sync.last_sync_stats, {
+      imported: 2,
+      filtered: 3,
+      failed: 0
+    });
+
+    const currentClaimAuthorization = await request('/internal/v1/sync/authorize', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer worker-secret' },
+      body: {
+        site_id: activation.site_id,
+        claim_id: advancedClaim.claim_id
+      }
+    });
+    assert.deepEqual(currentClaimAuthorization.json, { authorized: true, reason: 'authorized' });
 
     const failedRun = await request('/internal/v1/sync/runs', {
       method: 'POST',

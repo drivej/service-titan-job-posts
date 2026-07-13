@@ -18,10 +18,6 @@ function isSyncClaimLeased(site, now) {
   return Number.isFinite(claimedUntil) && claimedUntil > now.getTime();
 }
 
-function shouldReleaseSyncClaim(site, claimId) {
-  return !claimId || !site.sync_claim_id || site.sync_claim_id === claimId;
-}
-
 function isNewerCursor(currentCursor, processedUntil) {
   const current = Date.parse(String(currentCursor || ''));
   const next = processedUntil instanceof Date ? processedUntil.getTime() : Date.parse(String(processedUntil || ''));
@@ -319,6 +315,9 @@ class MemoryStore {
     if (!site || site.revoked_at) {
       throw serviceError(404, 'site_not_found', 'Site was not found.');
     }
+    if (!site.sync_claim_id || site.sync_claim_id !== input.claim_id) {
+      throw serviceError(409, 'stale_sync_claim', 'Sync run no longer owns the active site claim.');
+    }
 
     const now = context.now || new Date();
     site.last_sync_attempt_at = nowIso(now);
@@ -328,10 +327,8 @@ class MemoryStore {
     if (input.status === 'success' && isNewerCursor(site.last_successful_sync_at, input.processed_until)) {
       site.last_successful_sync_at = nowIso(input.processed_until);
     }
-    if (shouldReleaseSyncClaim(site, input.claim_id)) {
-      site.sync_claim_id = null;
-      site.sync_claimed_until = null;
-    }
+    site.sync_claim_id = null;
+    site.sync_claimed_until = null;
     site.updated_at = nowIso(now);
 
     return clone({

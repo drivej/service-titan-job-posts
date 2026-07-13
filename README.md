@@ -203,7 +203,9 @@ only when their exact JSON body is signed with the provisioned per-site secret.
 The hosted service supplies the ServiceTitan modified-date window for each
 eligible site and advances it only after the worker reports a successful run.
 Successful reports are monotonic, so a delayed worker cannot move a site's
-cursor backward.
+cursor backward. Run reports are also bound to the exact active claim, so a
+stale worker cannot move the cursor forward past unprocessed jobs or overwrite
+the current sync health.
 
 Install and run:
 
