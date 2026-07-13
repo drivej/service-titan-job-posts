@@ -141,6 +141,9 @@ cannot bypass the hosted check.
 Checkout creates a Stripe subscription session and returns a one-time license
 key, but that key cannot activate a WordPress site until a signed Stripe webhook
 updates the server-side subscription to `active` or `trialing`.
+Each unauthenticated checkout receives an isolated billing account even when its
+email matches an existing subscriber, so email knowledge cannot attach a new
+license to somebody else's paid entitlement.
 Delayed Stripe events are ordered by their signed event creation time, so an
 older active snapshot cannot overwrite a newer cancellation.
 Webhook deduplication and subscription updates are atomic, allowing Stripe to

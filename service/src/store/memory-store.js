@@ -137,17 +137,14 @@ class MemoryStore {
   async createBillingAccount(input, context) {
     const now = context.now || new Date();
     const email = String(input.email || '').toLowerCase();
-    let account = [...this.accounts.values()].find((candidate) => candidate.email === email);
-    if (!account) {
-      account = {
-        id: randomSecret('acct', 16),
-        email,
-        stripe_customer_id: '',
-        created_at: nowIso(now),
-        updated_at: nowIso(now)
-      };
-      this.accounts.set(account.id, account);
-    }
+    const account = {
+      id: randomSecret('acct', 16),
+      email,
+      stripe_customer_id: '',
+      created_at: nowIso(now),
+      updated_at: nowIso(now)
+    };
+    this.accounts.set(account.id, account);
 
     const licenseKey = randomSecret('lic', 24).toUpperCase();
     const license = {

@@ -301,6 +301,47 @@ test('checkout creates a license but activation stays blocked until Stripe marks
   }, { stripeClient });
 });
 
+test('checkout cannot mint a license against an existing subscriber by reusing their email', async () => {
+  const store = new MemoryStore(createSeed());
+  const stripeCustomers = [];
+  const stripeClient = {
+    async createCustomer(values) {
+      stripeCustomers.push(values);
+      return { id: 'cus_isolated_checkout' };
+    },
+    async createCheckoutSession() {
+      return { id: 'cs_isolated', url: 'https://checkout.stripe.test/cs_isolated' };
+    }
+  };
+
+  await withService(store, async ({ request }) => {
+    const checkout = await request('/v1/billing/checkout', {
+      method: 'POST',
+      body: {
+        email: 'OWNER@example.test',
+        plan: 'monthly'
+      }
+    });
+
+    assert.equal(checkout.response.status, 201);
+    assert.equal(stripeCustomers.length, 1);
+    assert.equal(store.dump().accounts.length, 2);
+
+    const activation = await request('/v1/licenses/activate', {
+      method: 'POST',
+      body: {
+        license_key: checkout.json.license_key,
+        site_url: 'https://new-site.example',
+        installation_id: 'wp-install-email-reuse',
+        delivery_url: 'https://new-site.example/wp-json/st-sync/v1/jobs'
+      }
+    });
+
+    assert.equal(activation.response.status, 402);
+    assert.equal(activation.json.code, 'subscription_required');
+  }, { stripeClient });
+});
+
 test('billing portal requires license or activation auth and uses server-configured return URL', async () => {
   const store = new MemoryStore(createSeed());
   const stripeCalls = [];

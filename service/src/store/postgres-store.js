@@ -170,19 +170,12 @@ class PostgresStore {
   async createBillingAccount(input, context) {
     return this.withTransaction(async (client) => {
       const email = String(input.email || '').toLowerCase();
-      let account = row(await client.query(
-        'SELECT * FROM accounts WHERE email = $1 ORDER BY created_at ASC LIMIT 1 FOR UPDATE',
-        [email]
+      const account = row(await client.query(
+        `INSERT INTO accounts (id, email, created_at, updated_at)
+         VALUES ($1, $2, $3, $3)
+         RETURNING *`,
+        [randomSecret('acct', 16), email, context.now]
       ));
-
-      if (!account) {
-        account = row(await client.query(
-          `INSERT INTO accounts (id, email, created_at, updated_at)
-           VALUES ($1, $2, $3, $3)
-           RETURNING *`,
-          [randomSecret('acct', 16), email, context.now]
-        ));
-      }
 
       const licenseKey = randomSecret('lic', 24).toUpperCase();
       const license = row(await client.query(

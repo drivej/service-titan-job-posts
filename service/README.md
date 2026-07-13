@@ -10,6 +10,9 @@ WordPress whether a subscription is valid.
 - Activate a license for a normalized site origin.
 - Store only hashes of license keys and activation tokens.
 - Create Stripe Checkout sessions with server-configured monthly/yearly prices.
+- Isolate every unauthenticated checkout in a new billing account, so knowledge
+  of an existing subscriber's email cannot mint a license against their paid
+  entitlement.
 - Encrypt per-site ServiceTitan credentials and WordPress delivery signing
   secrets with AES-256-GCM.
 - Derive entitlement from server-side subscription state.
