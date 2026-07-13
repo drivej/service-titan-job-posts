@@ -46,6 +46,8 @@ if (! class_exists('ST_Sync_Sevalla_API')) {
     exit(2);
 }
 
+require_once ABSPATH . 'wp-admin/includes/template.php';
+
 do_action('init');
 
 $admins = get_users(['role' => 'administrator', 'number' => 1, 'fields' => 'ID']);
@@ -122,7 +124,7 @@ function st_test_render_job_details(int $post_id): string
         'postId'   => $post_id,
         'postType' => 'st_job',
     ]);
-    return (new ST_Sync_Blocks())->render_job_details([], '', $block);
+    return $block->render();
 }
 
 try {
