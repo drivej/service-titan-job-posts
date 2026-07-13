@@ -35,3 +35,58 @@ jobs:
 
       - name: Validate
         run: sh scripts/validate.sh
+
+  wordpress-integration:
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_DATABASE: wordpress
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping --host=127.0.0.1 --user=root --password=root"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up PHP and WP-CLI
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          coverage: none
+          tools: wp-cli
+
+      - name: Install disposable WordPress site
+        env:
+          WP_ROOT: ${{ runner.temp }}/wordpress
+        run: |
+          wp core download --path="$WP_ROOT"
+          wp config create \
+            --path="$WP_ROOT" \
+            --dbname=wordpress \
+            --dbuser=root \
+            --dbpass=root \
+            --dbhost=127.0.0.1:3306
+          wp core install \
+            --path="$WP_ROOT" \
+            --url=http://localhost \
+            --title="ServiceTitan Plugin Test" \
+            --admin_user=admin \
+            --admin_password=test-password \
+            --admin_email=admin@example.test \
+            --skip-email
+          ln -s "$GITHUB_WORKSPACE" "$WP_ROOT/wp-content/plugins/service-titan-job-post"
+          wp plugin activate service-titan-job-post --path="$WP_ROOT"
+
+      - name: Run WordPress integration suite
+        env:
+          WP_ROOT: ${{ runner.temp }}/wordpress
+        run: php tests/wordpress-integration.php

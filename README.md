@@ -269,7 +269,8 @@ the integration test:
 WP_ROOT="/path/to/wordpress" php tests/wordpress-integration.php
 ```
 
-GitHub Actions runs the same non-WordPress checks on push and pull request.
+GitHub Actions runs those checks plus the integration suite against a freshly
+installed disposable WordPress and MySQL site on every push and pull request.
 
 ## Release packaging
 
