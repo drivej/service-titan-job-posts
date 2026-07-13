@@ -11,8 +11,8 @@ jobs into privacy-conscious, locally relevant website content.
 3. It filters jobs by price, city, job type, completion state, verified
    completion-detail quality, and remaining public detail after privacy
    redaction.
-4. It removes known customer names, exact addresses, email addresses, phone
-   numbers, and links from generated copy.
+4. It removes known customer names, street addresses, email addresses, phone
+   numbers, access codes, identity numbers, and links from generated copy.
 5. It writes a concise local summary that includes the job type, city/state, and
    redacted completion detail without inventing outcomes.
 6. It classifies the job as plumbing, HVAC, electrical, or a configured service.

@@ -125,16 +125,31 @@ function unitAliases(value) {
   return [...aliases];
 }
 
+function customerNameAliases(value) {
+  const name = cleanText(value);
+  if (!name) return [];
+
+  const aliases = new Set([name]);
+  const commaParts = name.split(',').map((part) => part.trim()).filter(Boolean);
+  if (commaParts.length === 2) {
+    aliases.add(`${commaParts[1]} ${commaParts[0]}`);
+  }
+  return [...aliases];
+}
+
 function redactSensitiveDetails(value, location = {}) {
   let text = cleanText(value)
     .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[contact removed]')
     .replace(/\b(?:https?:\/\/|www\.)\S+\b/gi, '[link removed]')
     .replace(/(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}\b/g, '[phone removed]')
+    .replace(/\b\d{3}-\d{2}-\d{4}\b/g, '[identity number removed]')
+    .replace(/\b(?:gate|door|garage|alarm|lockbox|entry|access)\s+(?:code|pin)\s*(?::|#|is)?\s*[A-Z0-9-]{3,12}\b/gi, '[access code removed]')
+    .replace(/\b\d{1,6}\s+[A-Z0-9.'-]+(?:\s+[A-Z0-9.'-]+){0,4}\s+(?:street|st|avenue|ave|road|rd|drive|dr|lane|ln|boulevard|blvd|court|ct|circle|cir|place|pl|terrace|ter|parkway|pkwy|highway|hwy|way)\.?\b/gi, '[address removed]')
     .replace(/\b(?:customer|homeowner|client)\s*:\s*[A-Z][A-Za-z'.-]+(?:\s+[A-Z][A-Za-z'.-]+){0,2}\b/g, 'customer');
 
   const address = location.address || {};
   const exactValues = [
-    location.name,
+    ...customerNameAliases(location.name),
     ...addressStreetAliases(address.street),
     ...unitAliases(address.unit),
     address.zip
@@ -148,7 +163,7 @@ function redactSensitiveDetails(value, location = {}) {
   }
 
   return text
-    .replace(/(?:\[(?:contact|link|phone|private detail) removed\]\s*){2,}/gi, '[private detail removed] ')
+    .replace(/(?:\[[a-z ]+ removed\]\s*){2,}/gi, '[private detail removed] ')
     .replace(/\s+([,.;!?])/g, '$1')
     .replace(/\s+/g, ' ')
     .trim();
@@ -175,7 +190,7 @@ function countWords(value) {
 
 function countPublicWords(value) {
   return countWords(
-    cleanText(value).replace(/\[(?:contact|link|phone|private detail) removed\]/gi, ' ')
+    cleanText(value).replace(/\[[a-z ]+ removed\]/gi, ' ')
   );
 }
 

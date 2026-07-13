@@ -177,6 +177,17 @@ test('summary removes known private contact and address details', () => {
 
   assert.doesNotMatch(redacted, /Jane Customer|10 Main St|Unit #2|9735551212|jane@example.com/i);
   assert.match(redacted, /removed/);
+
+  const expandedLocation = {
+    ...location,
+    name: 'Smith, John'
+  };
+  const sensitive = redactSensitiveDetails(
+    'John Smith requested entry using lockbox code 2468 at 22 Oak Avenue. SSN 123-45-6789.',
+    expandedLocation
+  );
+  assert.doesNotMatch(sensitive, /John Smith|2468|22 Oak|123-45-6789/i);
+  assert.match(sensitive, /access code removed/);
 });
 
 test('generated summary and payload are local, descriptive, and omit publication status', () => {
