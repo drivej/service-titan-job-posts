@@ -1,0 +1,91 @@
+name: Release WordPress plugin
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      ST_SYNC_SERVICE_URL: ${{ vars.ST_SYNC_SERVICE_URL }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            service/package-lock.json
+            sevalla/package-lock.json
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          coverage: none
+
+      - name: Install dependencies
+        run: |
+          npm ci --prefix sevalla
+          npm ci --prefix service
+
+      - name: Validate production release configuration
+        id: release
+        shell: bash
+        run: |
+          if [[ -z "$ST_SYNC_SERVICE_URL" || "$ST_SYNC_SERVICE_URL" != https://* ]]; then
+            echo "Set the production environment variable ST_SYNC_SERVICE_URL to the hosted HTTPS service origin." >&2
+            exit 1
+          fi
+          version="$(sh scripts/check-release-version.sh)"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            sh scripts/check-release-version.sh "$GITHUB_REF_NAME"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Validate source and tests
+        run: sh scripts/validate.sh
+
+      - name: Build customer release ZIP
+        env:
+          RELEASE_BUILD: '1'
+        run: sh scripts/build-plugin-zip.sh
+
+      - name: Verify embedded production endpoint
+        run: |
+          unzip -p dist/service-titan-job-post.zip service-titan-job-post/service-titan-job-post.php \
+            | grep -F "define('ST_SYNC_DEFAULT_SERVICE_URL', '$ST_SYNC_SERVICE_URL');"
+          cd dist
+          sha256sum service-titan-job-post.zip > service-titan-job-post.zip.sha256
+
+      - name: Upload reviewed build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: service-titan-job-post-${{ steps.release.outputs.version }}
+          path: |
+            dist/service-titan-job-post.zip
+            dist/service-titan-job-post.zip.sha256
+          if-no-files-found: error
+
+      - name: Publish tagged GitHub Release
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            dist/service-titan-job-post.zip \
+            dist/service-titan-job-post.zip.sha256 \
+            --verify-tag \
+            --generate-notes \
+            --title "ServiceTitan Local Job Content $GITHUB_REF_NAME"

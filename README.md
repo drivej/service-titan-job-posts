@@ -264,6 +264,24 @@ not overwrite the WordPress post. Instead, the Local Job edit screen shows a
 **ServiceTitan source update** box where an editor can compare the new source
 details and either apply the reviewed update or dismiss it.
 
+## Customer release pipeline
+
+Source and ordinary CI builds intentionally leave the hosted service URL empty
+and are not customer releases. Configure a protected GitHub environment named
+`production` with the non-secret variable `ST_SYNC_SERVICE_URL` set to the
+hosted HTTPS service origin.
+
+A version tag matching the plugin metadata, such as `v2.1.0`, then runs the
+**Release WordPress plugin** workflow. It validates the full repository, embeds
+the production endpoint, verifies the packaged value, generates a SHA-256
+checksum, uploads the workflow artifact, and attaches the ZIP and checksum to
+the matching GitHub Release. A manual workflow run builds the same reviewed
+artifact without publishing a GitHub Release.
+
+`scripts/check-release-version.sh` prevents a tag from publishing when the
+WordPress plugin header and `ST_SYNC_VERSION` disagree with each other or with
+the tag.
+
 ## Validation
 
 Run the repo-level validation script before committing:

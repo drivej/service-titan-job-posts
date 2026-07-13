@@ -8,7 +8,10 @@ echo "Checking worker JavaScript syntax..."
 node --check sevalla/sync.js
 
 echo "Checking hosted service JavaScript syntax..."
-find service/src service/test service/scripts -name '*.js' -print | xargs -n 1 node --check
+find service/src service/test service/scripts service/integration -name '*.js' -print | xargs -n 1 node --check
+
+echo "Checking release version metadata..."
+sh scripts/check-release-version.sh >/dev/null
 
 echo "Running worker tests..."
 node --test sevalla/test/sync.test.js
@@ -19,7 +22,7 @@ npm test --prefix service
 echo "Linting PHP files..."
 git ls-files '*.php' | xargs -n 1 php -l
 
-echo "Building installable WordPress plugin zip..."
+echo "Building development WordPress plugin zip..."
 sh scripts/build-plugin-zip.sh
 
 echo "Verifying hosted service URL injection for release builds..."
