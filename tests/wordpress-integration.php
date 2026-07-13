@@ -364,7 +364,29 @@ try {
         'sync_hash'    => hash('sha256', $run_token . '-4-changed'),
     ];
     $changed_request = st_test_request($changed, $test_site);
-    $api->upsert_job($changed_request);
+    $hash_before_failed_update = get_post_meta($approved_id, 'st_job_sync_hash', true);
+    $fail_pending_meta_once = static function ($check, $object_id, $meta_key) use ($approved_id) {
+        if ((int) $object_id === $approved_id && 'st_job_pending_city' === $meta_key) {
+            return false;
+        }
+        return $check;
+    };
+    add_filter('update_post_metadata', $fail_pending_meta_once, 10, 5);
+    $failed_changed_response = $api->upsert_job($changed_request);
+    remove_filter('update_post_metadata', $fail_pending_meta_once, 10);
+    st_test_assert(
+        is_wp_error($failed_changed_response) && 'st_sync_meta_write_failed' === $failed_changed_response->get_error_code(),
+        'A partial source-update metadata failure was not reported as retryable.'
+    );
+    st_test_assert(
+        $hash_before_failed_update === get_post_meta($approved_id, 'st_job_sync_hash', true),
+        'A partial source update advanced the sync hash before all review metadata was stored.'
+    );
+    $retried_changed_response = $api->upsert_job($changed_request);
+    st_test_assert(
+        $retried_changed_response instanceof WP_REST_Response && 200 === $retried_changed_response->get_status(),
+        'A source update did not recover after a transient metadata failure.'
+    );
     st_test_assert(
         $approved_content === get_post_field('post_content', $approved_id),
         'A repeat sync overwrote published editorial content.'

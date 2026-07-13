@@ -155,20 +155,30 @@ class ST_Sync_Sevalla_API
             // Existing review/editorial state is immutable to automation. Record
             // that ServiceTitan changed, but never move the post, rewrite its
             // copy, or replace pending edits.
-            update_post_meta($existing_id, 'st_job_tenant_id', $tenant_id);
-            update_post_meta($existing_id, 'st_job_sync_hash', $incoming_hash);
-            update_post_meta($existing_id, 'st_job_update_available', '1');
-            update_post_meta($existing_id, 'st_job_pending_summary', $summary);
-            update_post_meta($existing_id, 'st_job_pending_completed_on', $completed_on);
-            update_post_meta($existing_id, 'st_job_pending_city', $city);
-            update_post_meta($existing_id, 'st_job_pending_state', $state);
-            update_post_meta($existing_id, 'st_job_pending_service_slug', $service_slug);
-            update_post_meta($existing_id, 'st_job_pending_service_name', $service_name);
-            update_post_meta($existing_id, 'st_job_pending_location_slug', $location_slug);
-            update_post_meta($existing_id, 'st_job_pending_location_id', sanitize_text_field((string) ($payload['location_id'] ?? '')));
-            update_post_meta($existing_id, 'st_job_pending_job_type_id', sanitize_text_field((string) ($payload['job_type_id'] ?? '')));
-            update_post_meta($existing_id, 'st_job_pending_job_type_name', $job_type_name);
-            update_post_meta($existing_id, 'st_job_pending_total', isset($payload['total']) ? (string) (float) $payload['total'] : '');
+            $pending_meta = [
+                'st_job_tenant_id'             => $tenant_id,
+                'st_job_pending_summary'        => $summary,
+                'st_job_pending_completed_on'   => $completed_on,
+                'st_job_pending_city'           => $city,
+                'st_job_pending_state'          => $state,
+                'st_job_pending_service_slug'   => $service_slug,
+                'st_job_pending_service_name'   => $service_name,
+                'st_job_pending_location_slug'  => $location_slug,
+                'st_job_pending_location_id'    => sanitize_text_field((string) ($payload['location_id'] ?? '')),
+                'st_job_pending_job_type_id'    => sanitize_text_field((string) ($payload['job_type_id'] ?? '')),
+                'st_job_pending_job_type_name'  => $job_type_name,
+                'st_job_pending_total'          => isset($payload['total']) ? (string) (float) $payload['total'] : '',
+                'st_job_update_available'       => '1',
+                // The source hash is written last and acts as the retry commit marker.
+                'st_job_sync_hash'              => $incoming_hash,
+            ];
+            if (! $this->write_meta_values($existing_id, $pending_meta)) {
+                return new WP_Error(
+                    'st_sync_meta_write_failed',
+                    'The source update could not be stored completely. Retry the delivery.',
+                    ['status' => 500]
+                );
+            }
             if ($delivery_id) {
                 set_transient($delivery_key, 1, 30 * DAY_IN_SECONDS);
             }
@@ -206,21 +216,24 @@ class ST_Sync_Sevalla_API
             'post_name'    => sanitize_title($job_number),
             'post_content' => '<!-- wp:st-sync/job-details /-->',
             'post_excerpt' => $summary,
-            'meta_input'   => [
-                'st_job_tenant_id'   => $tenant_id,
-                'st_job_id'          => $job_id,
-                'st_job_number'      => $job_number,
-                'st_job_price'       => (float) ($payload['total'] ?? 0),
-                'st_job_date'        => $completed_on,
-                'st_job_city'        => $city,
-                'st_job_state'       => $state,
-                'st_job_service'     => $service_name,
-                'st_job_summary'     => $summary,
-                'st_job_location_id' => sanitize_text_field((string) ($payload['location_id'] ?? '')),
-                'st_job_type_id'     => sanitize_text_field((string) ($payload['job_type_id'] ?? '')),
-                'st_job_type_name'   => $job_type_name,
-                'st_job_update_available' => '0',
-            ],
+        ];
+
+        $job_meta = [
+            'st_job_tenant_id'       => $tenant_id,
+            'st_job_id'              => $job_id,
+            'st_job_number'          => $job_number,
+            'st_job_price'           => (float) ($payload['total'] ?? 0),
+            'st_job_date'            => $completed_on,
+            'st_job_city'            => $city,
+            'st_job_state'           => $state,
+            'st_job_service'         => $service_name,
+            'st_job_summary'         => $summary,
+            'st_job_location_id'     => sanitize_text_field((string) ($payload['location_id'] ?? '')),
+            'st_job_type_id'         => sanitize_text_field((string) ($payload['job_type_id'] ?? '')),
+            'st_job_type_name'       => $job_type_name,
+            'st_job_update_available'=> '0',
+            // Written last so retries never trust a partially initialized post.
+            'st_job_sync_hash'       => $incoming_hash,
         ];
 
         $post_id = wp_insert_post($post_data, true);
@@ -235,7 +248,14 @@ class ST_Sync_Sevalla_API
             return is_wp_error($service_result) ? $service_result : $location_result;
         }
 
-        update_post_meta($post_id, 'st_job_sync_hash', $incoming_hash);
+        if (! $this->write_meta_values($post_id, $job_meta)) {
+            wp_delete_post($post_id, true);
+            return new WP_Error(
+                'st_sync_meta_write_failed',
+                'The job metadata could not be stored completely. Retry the delivery.',
+                ['status' => 500]
+            );
+        }
 
         if ($delivery_id) {
             set_transient($delivery_key, 1, 30 * DAY_IN_SECONDS);
@@ -342,6 +362,20 @@ class ST_Sync_Sevalla_API
         ]);
 
         return empty($legacy) ? 0 : (int) $legacy[0];
+    }
+
+    private function write_meta_values(int $post_id, array $values): bool
+    {
+        foreach ($values as $key => $value) {
+            $current = get_post_meta($post_id, $key, true);
+            if ((string) $current === (string) $value) {
+                continue;
+            }
+            if (false === update_post_meta($post_id, $key, $value)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private function acquire_lock(string $lock_name): bool
