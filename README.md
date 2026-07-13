@@ -68,18 +68,18 @@ summary, service, city, date, and permalink that visitors see.
 
 ## WordPress installation
 
-1. Copy this directory to `wp-content/plugins/service-titan-job-post`.
-2. Configure the hosted service URL in the plugin build with
-   `ST_SYNC_SERVICE_URL` or the `st_sync_service_url` filter.
-3. Activate **ServiceTitan Local Job Content**.
-4. Use a non-Plain permalink structure.
-5. Open **Local Jobs Sync** in the WordPress admin.
+1. Install the customer release ZIP, which has the hosted service URL embedded.
+   Source/development installs can instead define `ST_SYNC_SERVICE_URL` or use
+   the `st_sync_service_url` filter.
+2. Activate **ServiceTitan Local Job Content**.
+3. Use a non-Plain permalink structure.
+4. Open **Local Jobs Sync** in the WordPress admin.
    You can also use the plugin list **Settings** link after activation.
-6. Start a monthly or yearly subscription checkout, or paste an existing
+5. Start a monthly or yearly subscription checkout, or paste an existing
    subscription license key.
-7. Activate the site with the subscription license after checkout is complete.
-8. Send ServiceTitan tenant/client credentials to the hosted service.
-9. Configure content filters and service mappings.
+6. Activate the site with the subscription license after checkout is complete.
+7. Send ServiceTitan tenant/client credentials to the hosted service.
+8. Configure content filters and service mappings.
 
 Once activated, the Subscription panel includes a **Manage billing** button that
 opens the hosted Stripe Billing Portal. Canceling there stops future sync claims
@@ -274,11 +274,17 @@ installed disposable WordPress and MySQL site on every push and pull request.
 
 ## Release packaging
 
-Build the customer-installable WordPress plugin zip with:
+Build the customer-installable WordPress plugin ZIP with its vendor-controlled
+hosted endpoint embedded:
 
 ```bash
+RELEASE_BUILD=1 \
+ST_SYNC_SERVICE_URL=https://sync.example.com \
 sh scripts/build-plugin-zip.sh
 ```
+
+Release builds fail if the URL is missing or does not use HTTPS. Running the
+script without `RELEASE_BUILD=1` still produces an unconfigured development ZIP.
 
 The zip is written to `dist/service-titan-job-post.zip` and includes only the
 WordPress plugin runtime: PHP files, block assets, and plugin docs. It

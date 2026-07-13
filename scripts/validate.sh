@@ -22,6 +22,14 @@ git ls-files '*.php' | xargs -n 1 php -l
 echo "Building installable WordPress plugin zip..."
 sh scripts/build-plugin-zip.sh
 
+echo "Verifying hosted service URL injection for release builds..."
+RELEASE_TEST_DIR="$(mktemp -d "${TMPDIR:-/tmp}/st-release-test.XXXXXX")"
+trap 'rm -rf "$RELEASE_TEST_DIR"' EXIT INT HUP TERM
+DIST_DIR="$RELEASE_TEST_DIR" \
+  RELEASE_BUILD=1 \
+  ST_SYNC_SERVICE_URL=https://sync.example.test \
+  sh scripts/build-plugin-zip.sh
+
 if [ -n "${WP_ROOT:-}" ]; then
   echo "Running WordPress integration test..."
   php tests/wordpress-integration.php

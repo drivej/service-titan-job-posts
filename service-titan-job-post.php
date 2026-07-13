@@ -19,6 +19,7 @@ if (! defined('ABSPATH')) {
 define('ST_SYNC_VERSION', '2.1.0');
 define('ST_SYNC_PLUGIN_FILE', __FILE__);
 define('ST_SYNC_PLUGIN_DIR', plugin_dir_path(__FILE__));
+define('ST_SYNC_DEFAULT_SERVICE_URL', '');
 
 require_once ST_SYNC_PLUGIN_DIR . 'includes/class-activator.php';
 require_once ST_SYNC_PLUGIN_DIR . 'includes/class-deactivator.php';

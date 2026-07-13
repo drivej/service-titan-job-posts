@@ -239,7 +239,9 @@ class ST_Sync_Service_Client
 
     private function base_url(): string
     {
-        $configured = defined('ST_SYNC_SERVICE_URL') ? (string) ST_SYNC_SERVICE_URL : '';
+        $configured = defined('ST_SYNC_SERVICE_URL')
+            ? (string) ST_SYNC_SERVICE_URL
+            : (defined('ST_SYNC_DEFAULT_SERVICE_URL') ? (string) ST_SYNC_DEFAULT_SERVICE_URL : '');
         $url = untrailingslashit((string) apply_filters('st_sync_service_url', $configured));
         if ('' === $url) {
             return '';
