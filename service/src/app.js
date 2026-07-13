@@ -507,9 +507,30 @@ async function handleRoute(request, rawBody, body, dependencies) {
     if (!event.id || !event.type) {
       throw serviceError(400, 'invalid_stripe_event', 'Stripe event id and type are required.');
     }
+    if (
+      typeof store.hasProcessedStripeWebhook === 'function' &&
+      await store.hasProcessedStripeWebhook(event.id, context)
+    ) {
+      return {
+        status: 200,
+        payload: { received: true, duplicate: true }
+      };
+    }
 
-    const subscription = subscriptionFromStripeObject(event.data && event.data.object, event.type);
+    let subscription = subscriptionFromStripeObject(event.data && event.data.object, event.type);
     if (subscription) {
+      if (typeof stripeClient.retrieveSubscription !== 'function') {
+        throw serviceError(500, 'stripe_reconciliation_unavailable', 'Stripe subscription reconciliation is unavailable.');
+      }
+      const currentSubscription = await stripeClient.retrieveSubscription(subscription.stripe_subscription_id);
+      subscription = subscriptionFromStripeObject(currentSubscription);
+      if (!subscription) {
+        throw serviceError(503, 'stripe_reconciliation_failed', 'Stripe did not return a current subscription object.');
+      }
+      if (typeof store.nextStripeReconciliationSequence !== 'function') {
+        throw serviceError(500, 'stripe_reconciliation_unavailable', 'Stripe reconciliation ordering is unavailable.');
+      }
+      subscription.stripe_reconciliation_sequence = await store.nextStripeReconciliationSequence(context);
       const eventCreated = Number(event.created);
       if (!Number.isFinite(eventCreated) || eventCreated <= 0) {
         throw serviceError(400, 'invalid_stripe_event', 'Stripe subscription events require a valid created timestamp.');

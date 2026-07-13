@@ -36,6 +36,52 @@ async function main() {
        VALUES ($1,$2,$3,true,1,$4,$4)`,
       [licenseId, accountId, `hash_${token}`, initialTime]
     );
+
+    const subscriptionBase = {
+      account_id: accountId,
+      stripe_subscription_id: `sub_pg_${token}`,
+      stripe_customer_id: `cus_pg_${token}`,
+      price_id: 'price_monthly',
+      current_period_end: new Date('2026-08-01T00:00:00.000Z'),
+      cancel_at_period_end: false,
+      stripe_event_created: 1783425600
+    };
+    const reconciliationOne = await store.nextStripeReconciliationSequence();
+    const reconciliationTwo = await store.nextStripeReconciliationSequence();
+    const reconciliationThree = await store.nextStripeReconciliationSequence();
+    assert.ok(reconciliationOne < reconciliationTwo && reconciliationTwo < reconciliationThree);
+    await store.applyStripeSubscription({
+      ...subscriptionBase,
+      status: 'paused',
+      stripe_reconciliation_sequence: reconciliationOne
+    }, {});
+    await store.applyStripeSubscription({
+      ...subscriptionBase,
+      status: 'active',
+      stripe_reconciliation_sequence: reconciliationTwo
+    }, {});
+    await store.applyStripeSubscription({
+      ...subscriptionBase,
+      status: 'active',
+      stripe_event_created: 9999999999
+    }, {});
+    await store.applyStripeSubscription({
+      ...subscriptionBase,
+      status: 'paused',
+      stripe_event_created: subscriptionBase.stripe_event_created - 60,
+      stripe_reconciliation_sequence: reconciliationThree
+    }, {});
+    await store.applyStripeSubscription({
+      ...subscriptionBase,
+      status: 'active',
+      stripe_reconciliation_sequence: reconciliationTwo
+    }, {});
+    const reconciledSubscription = await pool.query(
+      'SELECT status FROM subscriptions WHERE account_id = $1',
+      [accountId]
+    );
+    assert.equal(reconciledSubscription.rows[0].status, 'paused');
+
     await pool.query(
       `INSERT INTO sites (
          id, account_id, license_id, site_url, installation_id, delivery_url,

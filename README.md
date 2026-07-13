@@ -146,15 +146,21 @@ email matches an existing subscriber, so email knowledge cannot attach a new
 license to somebody else's paid entitlement.
 Delayed Stripe events are ordered by their signed event creation time, so an
 older active snapshot cannot overwrite a newer cancellation.
+Signed subscription events are reconciled against Stripe's current object
+before storage, so same-second pause/resume events converge on Stripe's
+authoritative state instead of leaving a paid customer stuck. A hosted monotonic
+sequence prevents concurrent webhook handlers from committing reconciled
+snapshots out of retrieval order.
 Webhook deduplication and subscription updates are atomic, allowing Stripe to
 retry safely if subscription persistence fails.
 The plugin admin can start this checkout flow and shows the one-time license key
 before redirecting to Stripe; it does not save that key locally.
 
-Eligible means the server-side subscription is `active` or `trialing`. Canceled,
-unpaid, paused, past-due, incomplete, and revoked activations do not appear in
-worker sync claims. Existing WordPress job posts are not gated by entitlement and
-remain on the customer's site.
+Eligible means the server-side subscription is `active` or `trialing`, payment
+collection is not paused, and Stripe supplied a valid future paid-through date.
+Canceled, unpaid, paused, expired, malformed, past-due, incomplete, and revoked
+activations do not appear in worker sync claims. Existing WordPress job posts
+are not gated by entitlement and remain on the customer's site.
 The plugin settings page mirrors that boundary by warning when future imports
 are paused while existing Local Job posts stay available.
 The plugin admin also reads hosted sync health from the service, including the

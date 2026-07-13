@@ -5,7 +5,7 @@ const { buildEntitlement } = require('../entitlements');
 const { serviceError } = require('../errors');
 const { SYNC_CLAIM_LEASE_MS, syncWindowForSite } = require('./sync-window');
 
-const LATEST_MIGRATION = '004_stripe_event_ordering.sql';
+const LATEST_MIGRATION = '005_stripe_reconciliation_ordering.sql';
 
 function row(result) {
   return result.rows && result.rows.length > 0 ? result.rows[0] : null;
@@ -499,6 +499,21 @@ class PostgresStore {
     });
   }
 
+  async hasProcessedStripeWebhook(eventId) {
+    const existing = row(await this.db.query(
+      'SELECT id FROM stripe_webhook_events WHERE id = $1 LIMIT 1',
+      [eventId]
+    ));
+    return Boolean(existing);
+  }
+
+  async nextStripeReconciliationSequence() {
+    const result = row(await this.db.query(
+      "SELECT nextval('stripe_reconciliation_sequence')::bigint AS sequence"
+    ));
+    return Number(result.sequence);
+  }
+
   async applyStripeSubscription(subscription, context, queryable = this.db) {
     if (!subscription) return null;
 
@@ -515,8 +530,9 @@ class PostgresStore {
     const applied = row(await queryable.query(
       `INSERT INTO subscriptions (
          account_id, stripe_subscription_id, stripe_customer_id, status,
-         price_id, current_period_end, cancel_at_period_end, stripe_event_created, updated_at
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,now())
+         price_id, current_period_end, cancel_at_period_end, stripe_event_created,
+         stripe_reconciliation_sequence, updated_at
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,now())
        ON CONFLICT (account_id) DO UPDATE SET
          stripe_subscription_id = EXCLUDED.stripe_subscription_id,
          stripe_customer_id = EXCLUDED.stripe_customer_id,
@@ -525,15 +541,29 @@ class PostgresStore {
          current_period_end = EXCLUDED.current_period_end,
          cancel_at_period_end = EXCLUDED.cancel_at_period_end,
          stripe_event_created = EXCLUDED.stripe_event_created,
+         stripe_reconciliation_sequence = EXCLUDED.stripe_reconciliation_sequence,
          updated_at = now()
-       WHERE subscriptions.stripe_event_created IS NULL
-          OR EXCLUDED.stripe_event_created IS NULL
-          OR EXCLUDED.stripe_event_created > subscriptions.stripe_event_created
+       WHERE (
+              EXCLUDED.stripe_reconciliation_sequence IS NOT NULL
+              AND (
+                subscriptions.stripe_reconciliation_sequence IS NULL
+                OR EXCLUDED.stripe_reconciliation_sequence >= subscriptions.stripe_reconciliation_sequence
+              )
+             )
           OR (
-            EXCLUDED.stripe_event_created = subscriptions.stripe_event_created
-            AND subscriptions.status IN ('active', 'trialing')
-            AND EXCLUDED.status NOT IN ('active', 'trialing')
-          )
+              EXCLUDED.stripe_reconciliation_sequence IS NULL
+              AND subscriptions.stripe_reconciliation_sequence IS NULL
+              AND (
+                subscriptions.stripe_event_created IS NULL
+                OR EXCLUDED.stripe_event_created IS NULL
+                OR EXCLUDED.stripe_event_created > subscriptions.stripe_event_created
+                OR (
+                  EXCLUDED.stripe_event_created = subscriptions.stripe_event_created
+                  AND subscriptions.status IN ('active', 'trialing')
+                  AND EXCLUDED.status NOT IN ('active', 'trialing')
+                )
+              )
+             )
        RETURNING *`,
       [
         accountId,
@@ -545,6 +575,10 @@ class PostgresStore {
         subscription.cancel_at_period_end === true,
         subscription.stripe_event_created != null && Number.isFinite(Number(subscription.stripe_event_created))
           ? Number(subscription.stripe_event_created)
+          : null,
+        subscription.stripe_reconciliation_sequence != null &&
+          Number.isFinite(Number(subscription.stripe_reconciliation_sequence))
+          ? Number(subscription.stripe_reconciliation_sequence)
           : null
       ]
     ));

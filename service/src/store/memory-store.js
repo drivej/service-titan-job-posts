@@ -32,6 +32,7 @@ class MemoryStore {
     this.sites = new Map();
     this.connections = new Map();
     this.webhookEvents = new Set();
+    this.stripeReconciliationSequence = 0;
 
     for (const account of seed.accounts || []) {
       this.accounts.set(account.id, { ...account });
@@ -45,6 +46,10 @@ class MemoryStore {
     }
     for (const subscription of seed.subscriptions || []) {
       this.subscriptions.set(subscription.account_id, { ...subscription });
+      const sequence = Number(subscription.stripe_reconciliation_sequence);
+      if (Number.isFinite(sequence)) {
+        this.stripeReconciliationSequence = Math.max(this.stripeReconciliationSequence, sequence);
+      }
     }
     for (const site of seed.sites || []) {
       this.sites.set(site.id, { ...site });
@@ -353,6 +358,15 @@ class MemoryStore {
     return true;
   }
 
+  async hasProcessedStripeWebhook(eventId) {
+    return this.webhookEvents.has(eventId);
+  }
+
+  async nextStripeReconciliationSequence() {
+    this.stripeReconciliationSequence += 1;
+    return this.stripeReconciliationSequence;
+  }
+
   async applyStripeSubscription(subscription) {
     if (!subscription) return null;
 
@@ -372,14 +386,34 @@ class MemoryStore {
     const currentEventCreated = !current || current.stripe_event_created == null
       ? Number.NaN
       : Number(current.stripe_event_created);
+    const incomingSequence = subscription.stripe_reconciliation_sequence == null
+      ? Number.NaN
+      : Number(subscription.stripe_reconciliation_sequence);
+    const currentSequence = !current || current.stripe_reconciliation_sequence == null
+      ? Number.NaN
+      : Number(current.stripe_reconciliation_sequence);
     const incomingEligible = ['active', 'trialing'].includes(String(subscription.status || ''));
     const currentEligible = ['active', 'trialing'].includes(String(current && current.status || ''));
     if (
+      Number.isFinite(incomingSequence) &&
+      Number.isFinite(currentSequence) &&
+      incomingSequence < currentSequence
+    ) {
+      return clone(current);
+    }
+    if (!Number.isFinite(incomingSequence) && Number.isFinite(currentSequence)) {
+      return clone(current);
+    }
+    if (
+      !Number.isFinite(incomingSequence) &&
       Number.isFinite(incomingEventCreated) &&
       Number.isFinite(currentEventCreated) &&
       (
         incomingEventCreated < currentEventCreated ||
-        (incomingEventCreated === currentEventCreated && (incomingEligible || !currentEligible))
+        (
+          incomingEventCreated === currentEventCreated &&
+          (incomingEligible || !currentEligible)
+        )
       )
     ) {
       return clone(current);
@@ -394,6 +428,7 @@ class MemoryStore {
       current_period_end: subscription.current_period_end || '',
       cancel_at_period_end: subscription.cancel_at_period_end === true,
       stripe_event_created: Number.isFinite(incomingEventCreated) ? incomingEventCreated : null,
+      stripe_reconciliation_sequence: Number.isFinite(incomingSequence) ? incomingSequence : null,
       updated_at: new Date().toISOString()
     };
     this.subscriptions.set(accountId, record);

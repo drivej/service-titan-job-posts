@@ -22,10 +22,6 @@ function isEligibleSubscription(subscription, now = new Date()) {
     return false;
   }
 
-  if (!subscription.current_period_end) {
-    return true;
-  }
-
   const end = Date.parse(toIso(subscription.current_period_end));
   return Number.isFinite(end) && end > now.getTime();
 }

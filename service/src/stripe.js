@@ -53,12 +53,15 @@ function subscriptionFromStripeObject(object, eventType = '') {
   const firstItem = object.items && Array.isArray(object.items.data) ? object.items.data[0] : null;
   const price = firstItem && firstItem.price ? firstItem.price : {};
   const currentPeriodEnd = object.current_period_end || (firstItem && firstItem.current_period_end) || null;
+  const collectionPaused = object.pause_collection !== null && object.pause_collection !== undefined;
 
   return {
     stripe_subscription_id: object.id,
     stripe_customer_id: typeof object.customer === 'string' ? object.customer : object.customer && object.customer.id,
     account_id: object.metadata && object.metadata.account_id,
-    status: eventType === 'customer.subscription.deleted' ? 'canceled' : object.status,
+    status: eventType === 'customer.subscription.deleted'
+      ? 'canceled'
+      : (collectionPaused ? 'paused' : object.status),
     price_id: price.id || object.plan && object.plan.id || '',
     current_period_end: currentPeriodEnd || '',
     cancel_at_period_end: object.cancel_at_period_end === true

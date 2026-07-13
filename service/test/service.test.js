@@ -5,6 +5,7 @@ const test = require('node:test');
 
 const { handleRoute } = require('../src/app');
 const { licenseHash } = require('../src/crypto');
+const { isEligibleSubscription } = require('../src/entitlements');
 const { ServiceError } = require('../src/errors');
 const { MemoryStore } = require('../src/store/memory-store');
 const { stripeSignatureHeader } = require('../src/stripe');
@@ -210,6 +211,7 @@ test('activation rejects cross-origin or non-plugin delivery URLs', async () => 
 test('checkout creates a license but activation stays blocked until Stripe marks the subscription active', async () => {
   const store = new MemoryStore();
   const stripeCalls = [];
+  let currentStripeSubscription = null;
   const stripeClient = {
     async createCustomer(values) {
       stripeCalls.push(['customer', values]);
@@ -218,6 +220,10 @@ test('checkout creates a license but activation stays blocked until Stripe marks
     async createCheckoutSession(values) {
       stripeCalls.push(['checkout', values]);
       return { id: 'cs_123', url: 'https://checkout.stripe.test/cs_123' };
+    },
+    async retrieveSubscription(subscriptionId) {
+      assert.equal(subscriptionId, 'sub_checkout');
+      return currentStripeSubscription;
     }
   };
 
@@ -276,6 +282,7 @@ test('checkout creates a license but activation stays blocked until Stripe marks
         }
       }
     };
+    currentStripeSubscription = event.data.object;
     const raw = JSON.stringify(event);
     const webhook = await request('/v1/stripe/webhooks', {
       method: 'POST',
@@ -389,6 +396,237 @@ test('rejects activation when the server-side subscription is not eligible', asy
     assert.equal(response.status, 402);
     assert.equal(json.code, 'subscription_required');
   });
+});
+
+test('subscription entitlement requires an unpaused status and a valid future paid-through date', () => {
+  const future = '2026-08-01T00:00:00.000Z';
+  assert.equal(isEligibleSubscription({ status: 'active', current_period_end: future }, FIXED_NOW), true);
+  assert.equal(isEligibleSubscription({
+    status: 'active',
+    current_period_end: future,
+    cancel_at_period_end: true
+  }, FIXED_NOW), true);
+  assert.equal(isEligibleSubscription({
+    status: 'active',
+    current_period_end: FIXED_NOW.toISOString()
+  }, FIXED_NOW), false);
+  assert.equal(isEligibleSubscription({ status: 'active', current_period_end: '' }, FIXED_NOW), false);
+  assert.equal(isEligibleSubscription({ status: 'trialing', current_period_end: 'invalid' }, FIXED_NOW), false);
+  assert.equal(isEligibleSubscription({ status: 'paused', current_period_end: future }, FIXED_NOW), false);
+});
+
+test('non-reconciled equal-timestamp updates keep the fail-closed subscription state', async () => {
+  const store = new MemoryStore(createSeed());
+  const base = {
+    account_id: 'acct_1',
+    stripe_subscription_id: 'sub_123',
+    stripe_customer_id: 'cus_123',
+    price_id: 'price_monthly',
+    current_period_end: '2026-08-01T00:00:00.000Z',
+    stripe_event_created: 1783425600
+  };
+  await store.applyStripeSubscription({ ...base, status: 'canceled' }, {});
+  await store.applyStripeSubscription({ ...base, status: 'active' }, {});
+  assert.equal(store.dump().subscriptions[0].status, 'canceled');
+});
+
+test('Stripe pause_collection immediately suspends claims even while Stripe reports active', async () => {
+  const store = new MemoryStore(createSeed());
+  let currentStripeSubscription = null;
+  let stripeUnavailable = false;
+  const stripeClient = {
+    async retrieveSubscription(subscriptionId) {
+      assert.equal(subscriptionId, 'sub_123');
+      if (stripeUnavailable) throw new Error('Stripe temporarily unavailable');
+      return currentStripeSubscription;
+    }
+  };
+  await withService(store, async ({ request, config }) => {
+    const activation = await activate(request);
+    const auth = { Authorization: `Bearer ${activation.activation_token}` };
+    await request('/v1/connections/servicetitan', {
+      method: 'PUT',
+      headers: auth,
+      body: {
+        tenant_id: '123456',
+        client_id: 'st_client',
+        client_secret: 'st_secret',
+        environment: 'production'
+      }
+    });
+
+    const subscriptionObject = {
+      id: 'sub_123',
+      object: 'subscription',
+      customer: 'cus_123',
+      status: 'active',
+      current_period_end: 1785542400,
+      cancel_at_period_end: false,
+      pause_collection: { behavior: 'void' },
+      metadata: { account_id: 'acct_1' },
+      items: {
+        data: [{
+          price: { id: 'price_monthly' },
+          current_period_end: 1785542400
+        }]
+      }
+    };
+    const sendWebhook = async (id, created, object, currentObject = object) => {
+      currentStripeSubscription = currentObject;
+      const event = {
+        id,
+        type: 'customer.subscription.updated',
+        created,
+        data: { object }
+      };
+      const raw = JSON.stringify(event);
+      return request('/v1/stripe/webhooks', {
+        method: 'POST',
+        headers: {
+          'Stripe-Signature': stripeSignatureHeader(
+            raw,
+            config.stripeWebhookSecret,
+            Math.floor(FIXED_NOW.getTime() / 1000)
+          )
+        },
+        body: raw
+      });
+    };
+
+    const paused = await sendWebhook('evt_collection_paused', 1783425600, subscriptionObject);
+    assert.equal(paused.response.status, 200);
+    assert.equal(store.dump().subscriptions[0].status, 'paused');
+
+    const pausedStatus = await request('/v1/licenses/status', { headers: auth });
+    assert.equal(pausedStatus.json.entitlement.status, 'paused');
+    assert.equal(pausedStatus.json.entitlement.eligible, false);
+    const pausedClaims = await request('/internal/v1/sync/claims', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer worker-secret' },
+      body: {}
+    });
+    assert.deepEqual(pausedClaims.json.sites, []);
+
+    const resumed = await sendWebhook('evt_collection_resumed', 1783425600, {
+      ...subscriptionObject,
+      pause_collection: null
+    });
+    assert.equal(resumed.response.status, 200);
+    assert.equal(store.dump().subscriptions[0].status, 'active');
+    const resumedStatus = await request('/v1/licenses/status', { headers: auth });
+    assert.equal(resumedStatus.json.entitlement.eligible, true);
+    const resumedClaims = await request('/internal/v1/sync/claims', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer worker-secret' },
+      body: {}
+    });
+    assert.equal(resumedClaims.json.sites.length, 1);
+
+    const delayedButAuthoritativePause = await sendWebhook(
+      'evt_delayed_before_current_pause',
+      1783425500,
+      { ...subscriptionObject, pause_collection: null },
+      subscriptionObject
+    );
+    assert.equal(delayedButAuthoritativePause.response.status, 200);
+    const delayedPauseStatus = await request('/v1/licenses/status', { headers: auth });
+    assert.equal(delayedPauseStatus.json.entitlement.status, 'paused');
+    assert.equal(delayedPauseStatus.json.entitlement.eligible, false);
+
+    stripeUnavailable = true;
+    const duplicate = await sendWebhook(
+      'evt_delayed_before_current_pause',
+      1783425500,
+      { ...subscriptionObject, pause_collection: null },
+      subscriptionObject
+    );
+    assert.equal(duplicate.response.status, 200);
+    assert.equal(duplicate.json.duplicate, true);
+  }, { stripeClient });
+});
+
+test('concurrent Stripe reconciliations cannot restore an older active snapshot', async () => {
+  let releaseFirst;
+  let markFirstBlocked;
+  const firstBlocked = new Promise((resolve) => {
+    markFirstBlocked = resolve;
+  });
+  const firstRelease = new Promise((resolve) => {
+    releaseFirst = resolve;
+  });
+
+  class ReorderedWebhookStore extends MemoryStore {
+    async processStripeWebhook(event, subscription, context) {
+      if (event.id === 'evt_active_slow') {
+        markFirstBlocked();
+        await firstRelease;
+      }
+      return super.processStripeWebhook(event, subscription, context);
+    }
+  }
+
+  const store = new ReorderedWebhookStore(createSeed());
+  const baseSubscription = {
+    id: 'sub_123',
+    object: 'subscription',
+    customer: 'cus_123',
+    status: 'active',
+    current_period_end: 1785542400,
+    pause_collection: null,
+    metadata: { account_id: 'acct_1' },
+    items: { data: [{ price: { id: 'price_monthly' }, current_period_end: 1785542400 }] }
+  };
+  const snapshots = [
+    baseSubscription,
+    { ...baseSubscription, pause_collection: { behavior: 'void' } }
+  ];
+  const stripeClient = {
+    async retrieveSubscription() {
+      return snapshots.shift();
+    }
+  };
+
+  await withService(store, async ({ request, config }) => {
+    const webhookRequest = (id, created) => {
+      const event = {
+        id,
+        type: 'customer.subscription.updated',
+        created,
+        data: { object: baseSubscription }
+      };
+      const raw = JSON.stringify(event);
+      return request('/v1/stripe/webhooks', {
+        method: 'POST',
+        headers: {
+          'Stripe-Signature': stripeSignatureHeader(
+            raw,
+            config.stripeWebhookSecret,
+            Math.floor(FIXED_NOW.getTime() / 1000)
+          )
+        },
+        body: raw
+      });
+    };
+
+    const olderActive = webhookRequest('evt_active_slow', 1783425600);
+    await firstBlocked;
+    const newerPause = await webhookRequest('evt_pause_fast', 1783425601);
+    assert.equal(newerPause.response.status, 200);
+    releaseFirst();
+    const lateActiveResult = await olderActive;
+    assert.equal(lateActiveResult.response.status, 200);
+    assert.equal(store.dump().subscriptions[0].status, 'paused');
+    await store.applyStripeSubscription({
+      account_id: 'acct_1',
+      stripe_subscription_id: 'sub_123',
+      stripe_customer_id: 'cus_123',
+      status: 'active',
+      price_id: 'price_monthly',
+      current_period_end: '2026-08-01T00:00:00.000Z',
+      stripe_event_created: 9999999999
+    }, {});
+    assert.equal(store.dump().subscriptions[0].status, 'paused');
+  }, { stripeClient });
 });
 
 test('stores ServiceTitan credentials encrypted and returns claims only to the worker', async () => {
@@ -763,6 +1001,13 @@ test('revoked activations preserve old content boundary by removing only future 
 
 test('Stripe webhook signatures, idempotency, and event ordering protect subscription state', async () => {
   const store = new MemoryStore(createSeed());
+  let currentStripeSubscription = null;
+  const stripeClient = {
+    async retrieveSubscription(subscriptionId) {
+      assert.equal(subscriptionId, 'sub_123');
+      return currentStripeSubscription;
+    }
+  };
   await withService(store, async ({ request, config }) => {
     const activation = await activate(request);
     const auth = { Authorization: `Bearer ${activation.activation_token}` };
@@ -798,6 +1043,7 @@ test('Stripe webhook signatures, idempotency, and event ordering protect subscri
         }
       }
     };
+    currentStripeSubscription = event.data.object;
     const raw = JSON.stringify(event);
 
     const rejected = await request('/v1/stripe/webhooks', {
@@ -857,7 +1103,7 @@ test('Stripe webhook signatures, idempotency, and event ordering protect subscri
     });
     assert.equal(claims.response.status, 200);
     assert.deepEqual(claims.json.sites, []);
-  });
+  }, { stripeClient });
 });
 
 test('Stripe webhook retries remain processable after a subscription update failure', async () => {
@@ -877,6 +1123,13 @@ test('Stripe webhook retries remain processable after a subscription update fail
   }
 
   const store = new RetryableWebhookStore(createSeed());
+  let currentStripeSubscription = null;
+  const stripeClient = {
+    async retrieveSubscription(subscriptionId) {
+      assert.equal(subscriptionId, 'sub_123');
+      return currentStripeSubscription;
+    }
+  };
   await withService(store, async ({ request, config }) => {
     const event = {
       id: 'evt_retryable_cancel',
@@ -894,6 +1147,7 @@ test('Stripe webhook retries remain processable after a subscription update fail
         }
       }
     };
+    currentStripeSubscription = event.data.object;
     const raw = JSON.stringify(event);
     const headers = {
       'Stripe-Signature': stripeSignatureHeader(raw, config.stripeWebhookSecret, Math.floor(FIXED_NOW.getTime() / 1000))
@@ -912,5 +1166,5 @@ test('Stripe webhook retries remain processable after a subscription update fail
     const duplicate = await request('/v1/stripe/webhooks', { method: 'POST', headers, body: raw });
     assert.equal(duplicate.response.status, 200);
     assert.equal(duplicate.json.duplicate, true);
-  });
+  }, { stripeClient });
 });

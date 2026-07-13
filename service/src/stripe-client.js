@@ -32,21 +32,23 @@ class StripeApiClient {
   constructor(config = {}) {
     this.secretKey = config.secretKey || '';
     this.baseUrl = config.baseUrl || 'https://api.stripe.com';
+    this.fetch = config.fetch || globalThis.fetch;
   }
 
-  async request(path, values) {
+  async request(path, values = {}, method = 'POST') {
     if (!this.secretKey) {
       throw serviceError(500, 'stripe_not_configured', 'Stripe secret key is not configured.');
     }
 
-    const response = await fetch(`${this.baseUrl}${path}`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Basic ${Buffer.from(`${this.secretKey}:`).toString('base64')}`,
-        'Content-Type': 'application/x-www-form-urlencoded'
-      },
-      body: formEncode(values)
-    });
+    const headers = {
+      Authorization: `Basic ${Buffer.from(`${this.secretKey}:`).toString('base64')}`
+    };
+    const requestOptions = { method, headers };
+    if (method !== 'GET') {
+      headers['Content-Type'] = 'application/x-www-form-urlencoded';
+      requestOptions.body = formEncode(values);
+    }
+    const response = await this.fetch(`${this.baseUrl}${path}`, requestOptions);
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
       throw serviceError(
@@ -70,6 +72,14 @@ class StripeApiClient {
 
   createPortalSession(values) {
     return this.request('/v1/billing_portal/sessions', values);
+  }
+
+  retrieveSubscription(subscriptionId) {
+    const id = String(subscriptionId || '').trim();
+    if (!/^sub_[A-Za-z0-9_]+$/.test(id)) {
+      throw serviceError(400, 'invalid_stripe_subscription', 'Stripe subscription ID is invalid.');
+    }
+    return this.request(`/v1/subscriptions/${encodeURIComponent(id)}`, {}, 'GET');
   }
 }
 

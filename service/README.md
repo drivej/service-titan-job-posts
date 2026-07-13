@@ -25,12 +25,21 @@ WordPress whether a subscription is valid.
 - Validate Stripe webhook signatures from the raw request body before updating
   subscription state, and ignore older delayed subscription events so they
   cannot restore access after a newer cancellation.
+- Reconcile signed subscription webhooks against Stripe's current subscription
+  object before applying them, resolving same-second pause/resume events without
+  weakening fail-closed ordering. Authoritative reconciled snapshots supersede
+  local event timestamps and receive a database-issued monotonic sequence so
+  concurrent handlers cannot commit them out of retrieval order. Completed
+  duplicate events skip the Stripe API call while transactional deduplication
+  remains in place for concurrent requests.
 - Commit webhook deduplication and subscription updates in one transaction so a
   storage failure remains safely retryable instead of losing the billing event.
 
-Old WordPress posts are never deleted or hidden by this service. If a
-subscription becomes canceled, unpaid, paused, or otherwise ineligible, the
-site simply stops appearing in sync claims.
+Old WordPress posts are never deleted or hidden by this service. Eligibility
+requires an `active` or `trialing` Stripe status, no `pause_collection`, and a
+valid future paid-through date. If a subscription becomes canceled, unpaid,
+paused, expired, malformed, or otherwise ineligible, the site simply stops
+appearing in sync claims.
 
 ## HTTP contract
 
