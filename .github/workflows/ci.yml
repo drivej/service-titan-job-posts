@@ -10,10 +10,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '22'
           cache: npm
@@ -55,7 +55,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up PHP and WP-CLI
         uses: shivammathur/setup-php@v2
@@ -83,6 +83,7 @@ jobs:
             --admin_password=test-password \
             --admin_email=admin@example.test \
             --skip-email
+          wp rewrite structure '/%postname%/' --path="$WP_ROOT"
           ln -s "$GITHUB_WORKSPACE" "$WP_ROOT/wp-content/plugins/service-titan-job-post"
           wp plugin activate service-titan-job-post --path="$WP_ROOT"
 
