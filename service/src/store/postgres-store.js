@@ -323,6 +323,10 @@ class PostgresStore {
   async listEligibleSyncClaims(context) {
     const now = context.now || new Date();
     const nowDate = now instanceof Date ? now : new Date(now);
+    const runStartedAt = context.runStartedAt instanceof Date
+      ? context.runStartedAt
+      : new Date(context.runStartedAt || nowDate);
+    const claimLimit = 1;
 
     return this.withTransaction(async (client) => {
       const result = await client.query(
@@ -337,11 +341,16 @@ class PostgresStore {
            c.client_secret_encrypted
          FROM sites s
          INNER JOIN servicetitan_connections c ON c.site_id = s.id
-         LEFT JOIN subscriptions sub ON sub.account_id = s.account_id
+         INNER JOIN subscriptions sub ON sub.account_id = s.account_id
          WHERE s.revoked_at IS NULL
            AND (s.sync_claimed_until IS NULL OR s.sync_claimed_until <= $1)
+           AND sub.status IN ('active', 'trialing')
+           AND sub.current_period_end > $1
+           AND (s.last_sync_attempt_at IS NULL OR s.last_sync_attempt_at < $2)
+         ORDER BY s.last_sync_attempt_at ASC NULLS FIRST, s.id ASC
+         LIMIT $3
          FOR UPDATE OF s SKIP LOCKED`,
-        [nowDate]
+        [nowDate, runStartedAt, claimLimit]
       );
 
       const claims = [];

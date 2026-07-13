@@ -75,7 +75,12 @@ async function withService(store, callback, harnessOptions = {}) {
         { method: requestOptions.method || 'GET', url: path, headers },
         rawBody,
         body,
-        { config, store, stripeClient: harnessOptions.stripeClient, now: () => FIXED_NOW }
+        {
+          config,
+          store,
+          stripeClient: harnessOptions.stripeClient,
+          now: harnessOptions.now || (() => FIXED_NOW)
+        }
       );
       return { response: { status: result.status }, json: result.payload };
     } catch (error) {
@@ -778,8 +783,28 @@ test('stores ServiceTitan credentials encrypted and returns claims only to the w
   });
 });
 
+test('sync claim requests enforce singleton batches and server-issued run timestamps', async () => {
+  const store = new MemoryStore(createSeed());
+  await withService(store, async ({ request }) => {
+    for (const body of [
+      { limit: 2 },
+      { run_started_at: 'not-a-date' },
+      { run_started_at: '2026-07-07T12:00:01.000Z' }
+    ]) {
+      const result = await request('/internal/v1/sync/claims', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer worker-secret' },
+        body
+      });
+      assert.equal(result.response.status, 400);
+      assert.equal(result.json.code, 'invalid_sync_claim_request');
+    }
+  });
+});
+
 test('sync claims use policy backfill first, then successful runs advance the cursor with overlap', async () => {
   const store = new MemoryStore(createSeed());
+  let currentNow = FIXED_NOW;
   await withService(store, async ({ request }) => {
     const activation = await activate(request);
     const auth = { Authorization: `Bearer ${activation.activation_token}` };
@@ -866,6 +891,14 @@ test('sync claims use policy backfill first, then successful runs advance the cu
     assert.equal(successfulRun.json.last_sync_status, 'success');
     assert.equal(successfulRun.json.last_successful_sync_at, '2026-07-07T12:00:00.000Z');
 
+    const completedRunClaims = await request('/internal/v1/sync/claims', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer worker-secret' },
+      body: { limit: 1, run_started_at: initialClaims.json.run_started_at }
+    });
+    assert.deepEqual(completedRunClaims.json.sites, []);
+
+    currentNow = new Date('2026-07-07T12:01:00.000Z');
     const advancedClaims = await request('/internal/v1/sync/claims', {
       method: 'POST',
       headers: { Authorization: 'Bearer worker-secret' },
@@ -949,7 +982,7 @@ test('sync claims use policy backfill first, then successful runs advance the cu
     const statusAfterFailure = await request('/v1/licenses/status', { headers: auth });
     assert.equal(statusAfterFailure.response.status, 200);
     assert.equal(statusAfterFailure.json.sync.last_successful_sync_at, '2026-07-07T12:00:00.000Z');
-    assert.equal(statusAfterFailure.json.sync.last_sync_attempt_at, '2026-07-07T12:00:00.000Z');
+    assert.equal(statusAfterFailure.json.sync.last_sync_attempt_at, '2026-07-07T12:01:00.000Z');
     assert.equal(statusAfterFailure.json.sync.last_sync_status, 'failed');
     assert.equal(statusAfterFailure.json.sync.last_sync_error, 'delivery failed');
     assert.deepEqual(statusAfterFailure.json.sync.last_sync_stats, {
@@ -958,13 +991,14 @@ test('sync claims use policy backfill first, then successful runs advance the cu
       failed: 1
     });
 
+    currentNow = new Date('2026-07-07T12:02:00.000Z');
     const afterFailureClaims = await request('/internal/v1/sync/claims', {
       method: 'POST',
       headers: { Authorization: 'Bearer worker-secret' },
       body: {}
     });
     assert.equal(afterFailureClaims.json.sites[0].modified_on_or_after, '2026-07-07T11:50:00.000Z');
-  });
+  }, { now: () => currentNow });
 });
 
 test('revoked activations preserve old content boundary by removing only future sync claims', async () => {

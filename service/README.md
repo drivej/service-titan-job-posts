@@ -65,9 +65,10 @@ Plugin-facing endpoints:
 Worker-facing endpoint:
 
 - `POST /internal/v1/sync/claims` with `Authorization: Bearer <WORKER_API_KEY>`
-  returns eligible sites with a `claim_id` and `sync_claimed_until` lease. A
-  currently leased site is omitted until the lease expires or the worker reports
-  a run result.
+  accepts only `limit: 1` and returns one eligible site with a `claim_id`, a
+  `sync_claimed_until` lease, and a server-issued `run_started_at`. The worker
+  echoes that timestamp while draining later singleton batches. Sites already
+  attempted during that run and sites with an active lease are omitted.
 - `POST /internal/v1/sync/authorize` with worker authentication, `site_id`, and
   `claim_id` rechecks the live lease and subscription immediately before each
   WordPress delivery. A denial fails closed without creating a post.

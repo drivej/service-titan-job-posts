@@ -513,3 +513,146 @@ test('hosted claim sync isolates one site failure from other eligible sites', as
   assert.deepEqual(reports.map((report) => report.status), ['failed', 'success']);
   assert.deepEqual(reports.map((report) => report.claim_id), ['claim_bad', 'claim_good']);
 });
+
+test('hosted claim sync drains singleton batches with one stable server run boundary', async () => {
+  const runStartedAt = '2026-07-07T12:00:00.000Z';
+  const claims = ['site_one', 'site_two'].map((siteId) => ({
+    site_id: siteId,
+    claim_id: `claim_${siteId}`,
+    delivery_url: `https://${siteId}.example/wp-json/st-sync/v1/jobs`,
+    signing_secret: 'site-secret',
+    policy: settings,
+    service_titan: {
+      tenant_id: 'tenant-123',
+      environment: 'production',
+      client_id: 'client',
+      client_secret: 'secret'
+    }
+  }));
+  const requestBodies = [];
+  const reports = [];
+
+  const result = await syncClaimedSites({
+    fetchClaims(body) {
+      requestBodies.push(body);
+      return {
+        sites: requestBodies.length <= claims.length ? [claims[requestBodies.length - 1]] : [],
+        run_started_at: runStartedAt
+      };
+    },
+    source: { jobs: [job], jobTypes: [jobType], locations: [location] },
+    quiet: true,
+    reportRun(body) {
+      reports.push(body);
+    },
+    wpClientFactory() {
+      return { async post() { return { data: { created: true } }; } };
+    }
+  });
+
+  assert.equal(result.sites, 2);
+  assert.equal(result.imported, 2);
+  assert.equal(result.failed, 0);
+  assert.equal(requestBodies.length, 3);
+  assert.deepEqual(requestBodies, [
+    { limit: 1 },
+    { limit: 1, run_started_at: runStartedAt },
+    { limit: 1, run_started_at: runStartedAt }
+  ]);
+  assert.deepEqual(reports.map((report) => report.site_id), ['site_one', 'site_two']);
+});
+
+test('hosted claim sync stops claiming when a run report cannot be persisted', async () => {
+  let claimRequests = 0;
+  const result = await syncClaimedSites({
+    fetchClaims() {
+      claimRequests += 1;
+      return {
+        sites: [{
+          site_id: 'site_unreported',
+          claim_id: 'claim_unreported',
+          delivery_url: 'https://client.example/wp-json/st-sync/v1/jobs',
+          signing_secret: 'site-secret',
+          policy: settings,
+          service_titan: { tenant_id: 'tenant', client_id: 'client', client_secret: 'secret' }
+        }],
+        run_started_at: '2026-07-07T12:00:00.000Z'
+      };
+    },
+    source: { jobs: [job], jobTypes: [jobType], locations: [location] },
+    quiet: true,
+    reportRun() {
+      throw new Error('report unavailable');
+    },
+    wpClientFactory() {
+      return { async post() { return { data: { created: true } }; } };
+    }
+  });
+
+  assert.equal(claimRequests, 1);
+  assert.equal(result.sites, 1);
+  assert.equal(result.failed, 1);
+});
+
+test('hosted claim sync stops at the configured batch safety bound', async () => {
+  let claimRequests = 0;
+  const result = await syncClaimedSites({
+    maxClaimBatches: 2,
+    fetchClaims() {
+      claimRequests += 1;
+      return {
+        sites: [{
+          site_id: `site_${claimRequests}`,
+          claim_id: `claim_${claimRequests}`,
+          delivery_url: 'https://client.example/wp-json/st-sync/v1/jobs',
+          signing_secret: 'site-secret',
+          policy: settings,
+          service_titan: { tenant_id: 'tenant', client_id: 'client', client_secret: 'secret' }
+        }],
+        run_started_at: '2026-07-07T12:00:00.000Z'
+      };
+    },
+    source: { jobs: [], jobTypes: [], locations: [] },
+    quiet: true,
+    reportRun() {}
+  });
+
+  assert.equal(claimRequests, 2);
+  assert.equal(result.sites, 2);
+  assert.equal(result.failed, 1);
+});
+
+test('hosted claim sync rejects oversized batches and changing run boundaries', async () => {
+  await assert.rejects(() => syncClaimedSites({
+    quiet: true,
+    fetchClaims() {
+      return {
+        sites: [{ site_id: 'one' }, { site_id: 'two' }],
+        run_started_at: '2026-07-07T12:00:00.000Z'
+      };
+    }
+  }), /invalid sync claim batch/);
+
+  let requests = 0;
+  await assert.rejects(() => syncClaimedSites({
+    quiet: true,
+    fetchClaims() {
+      requests += 1;
+      return {
+        sites: requests === 1 ? [{
+          site_id: 'site_one',
+          claim_id: 'claim_one',
+          delivery_url: 'https://client.example/wp-json/st-sync/v1/jobs',
+          signing_secret: 'site-secret',
+          policy: settings,
+          service_titan: { tenant_id: 'tenant', client_id: 'client', client_secret: 'secret' }
+        }] : [],
+        run_started_at: requests === 1
+          ? '2026-07-07T12:00:00.000Z'
+          : '2026-07-07T12:01:00.000Z'
+      };
+    },
+    source: { jobs: [], jobTypes: [], locations: [] },
+    reportRun() {}
+  }), /changed the sync run boundary/);
+});

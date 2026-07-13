@@ -256,9 +256,21 @@ class MemoryStore {
   async listEligibleSyncClaims(context) {
     const claims = [];
     const now = context.now instanceof Date ? context.now : new Date(context.now || Date.now());
-    for (const site of this.sites.values()) {
+    const runStartedAt = context.runStartedAt instanceof Date
+      ? context.runStartedAt
+      : new Date(context.runStartedAt || now);
+    const limit = 1;
+    const sites = [...this.sites.values()].sort((left, right) => {
+      const leftAttempt = left.last_sync_attempt_at ? new Date(left.last_sync_attempt_at).getTime() : -Infinity;
+      const rightAttempt = right.last_sync_attempt_at ? new Date(right.last_sync_attempt_at).getTime() : -Infinity;
+      return leftAttempt - rightAttempt || String(left.id).localeCompare(String(right.id));
+    });
+
+    for (const site of sites) {
       if (site.revoked_at) continue;
       if (isSyncClaimLeased(site, now)) continue;
+      const lastAttempt = new Date(site.last_sync_attempt_at || 0);
+      if (Number.isFinite(lastAttempt.getTime()) && lastAttempt >= runStartedAt) continue;
 
       const subscription = this.subscriptions.get(site.account_id);
       const entitlement = buildEntitlement(subscription, context.priceMap, now);
@@ -292,6 +304,7 @@ class MemoryStore {
           client_secret: decryptText(connection.client_secret_encrypted, context.encryptionKey)
         }
       });
+      if (claims.length >= limit) break;
     }
     return claims;
   }

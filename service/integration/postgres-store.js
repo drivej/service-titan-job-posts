@@ -3,6 +3,7 @@
 const assert = require('node:assert/strict');
 const { Pool } = require('pg');
 
+const { encryptText } = require('../src/crypto');
 const { ServiceError } = require('../src/errors');
 const { PostgresStore } = require('../src/store/postgres-store');
 
@@ -23,6 +24,7 @@ async function main() {
   const accountId = `acct_pg_${token}`;
   const licenseId = `lic_pg_${token}`;
   const siteId = `site_pg_${token}`;
+  const secondSiteId = `site_pg_second_${token}`;
   const initialTime = new Date('2026-07-07T12:00:00.000Z');
   const currentClaim = `claim_current_${token}`;
 
@@ -198,7 +200,97 @@ async function main() {
     assert.equal(afterSuccess.sync_claim_id, null);
     assert.equal(afterSuccess.sync_claimed_until, null);
 
-    console.log('PostgreSQL claim-bound sync report integration passed.');
+    const encryptionKey = `integration-key-${token}`;
+    const encryptedSigningSecret = encryptText('signing-secret', encryptionKey);
+    const encryptedClientId = encryptText('client-id', encryptionKey);
+    const encryptedClientSecret = encryptText('client-secret', encryptionKey);
+    await pool.query(
+      `UPDATE subscriptions SET status = 'active' WHERE account_id = $1`,
+      [accountId]
+    );
+    await pool.query(
+      `UPDATE sites
+          SET signing_secret_encrypted = $2::jsonb,
+              last_successful_sync_at = NULL,
+              last_sync_attempt_at = NULL,
+              sync_claim_id = NULL,
+              sync_claimed_until = NULL
+        WHERE id = $1`,
+      [siteId, JSON.stringify(encryptedSigningSecret)]
+    );
+    await pool.query(
+      `INSERT INTO sites (
+         id, account_id, license_id, site_url, installation_id, delivery_url,
+         plugin_version, activation_token_hash, signing_secret_encrypted, policy,
+         created_at, updated_at
+       ) VALUES ($1,$2,$3,$4,$5,$6,'test',$7,$8::jsonb,'{}'::jsonb,$9,$9)`,
+      [
+        secondSiteId,
+        accountId,
+        licenseId,
+        `https://postgres-second-${token}.example`,
+        `install_second_${token}`,
+        `https://postgres-second-${token}.example/wp-json/st-sync/v1/jobs`,
+        `activation_second_${token}`,
+        JSON.stringify(encryptedSigningSecret),
+        initialTime
+      ]
+    );
+    for (const claimedSiteId of [siteId, secondSiteId]) {
+      await pool.query(
+        `INSERT INTO servicetitan_connections (
+           site_id, tenant_id, environment, client_id_encrypted,
+           client_secret_encrypted, created_at, updated_at
+         ) VALUES ($1,'tenant','production',$2::jsonb,$3::jsonb,$4,$4)`,
+        [
+          claimedSiteId,
+          JSON.stringify(encryptedClientId),
+          JSON.stringify(encryptedClientSecret),
+          initialTime
+        ]
+      );
+    }
+
+    const runStartedAt = new Date('2026-07-07T12:20:00.000Z');
+    const claimContext = {
+      now: runStartedAt,
+      runStartedAt,
+      claimLimit: 1,
+      encryptionKey,
+      priceMap: { monthly: 'price_monthly' }
+    };
+    const concurrentClaims = await Promise.all([
+      store.listEligibleSyncClaims(claimContext),
+      store.listEligibleSyncClaims(claimContext)
+    ]);
+    assert.deepEqual(concurrentClaims.map((claims) => claims.length), [1, 1]);
+    assert.equal(new Set(concurrentClaims.flat().map((claim) => claim.site_id)).size, 2);
+
+    for (const claim of concurrentClaims.flat()) {
+      await store.recordSyncRun({
+        site_id: claim.site_id,
+        claim_id: claim.claim_id,
+        status: 'success',
+        processed_until: runStartedAt,
+        stats: { imported: 0, filtered: 0, failed: 0 },
+        error: ''
+      }, { now: new Date('2026-07-07T12:21:00.000Z') });
+    }
+    const completedRunClaims = await store.listEligibleSyncClaims({
+      ...claimContext,
+      now: new Date('2026-07-07T12:22:00.000Z')
+    });
+    assert.deepEqual(completedRunClaims, []);
+
+    const laterRun = new Date('2026-07-07T12:23:00.000Z');
+    const laterRunClaims = await store.listEligibleSyncClaims({
+      ...claimContext,
+      now: laterRun,
+      runStartedAt: laterRun
+    });
+    assert.equal(laterRunClaims.length, 1);
+
+    console.log('PostgreSQL claim-bound reporting and singleton batching integration passed.');
   } finally {
     await pool.query('DELETE FROM accounts WHERE id = $1', [accountId]);
     await pool.end();

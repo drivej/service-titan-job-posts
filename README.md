@@ -208,6 +208,10 @@ are never fetched from a customer-editable PHP endpoint. WordPress accepts jobs
 only when their exact JSON body is signed with the provisioned per-site secret.
 The hosted service supplies the ServiceTitan modified-date window for each
 eligible site and advances it only after the worker reports a successful run.
+The worker claims one site immediately before processing it, then repeats with
+the server-issued run boundary until no sites remain. This prevents later sites
+from aging through their leases while an earlier site is still processing and
+prevents completed sites from being selected twice in one scheduled run.
 Successful reports are monotonic, so a delayed worker cannot move a site's
 cursor backward. Run reports are also bound to the exact active claim, so a
 stale worker cannot move the cursor forward past unprocessed jobs or overwrite
@@ -239,7 +243,8 @@ secrets. Manual runs bypass the enable flag for setup testing, but fail before
 checkout when required configuration is missing. The job has read-only
 repository permissions, refuses development/standalone modes, exits nonzero if
 any customer site or run report fails, and is bounded to 25 minutes beneath the
-30-minute claim lease.
+30-minute claim lease. `SYNC_MAX_SITES_PER_RUN` can set an additional positive
+site-count safety bound; the worker defaults to 500.
 
 GitHub failure notifications should be enabled for this workflow. Production
 operations should also monitor the hosted sync-health timestamps externally;

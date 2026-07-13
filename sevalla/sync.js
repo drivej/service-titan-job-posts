@@ -9,6 +9,8 @@ require('dotenv').config({ path: path.join(__dirname, '.env'), quiet: true });
 const DEFAULT_TIMEOUT_MS = 20000;
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGES = 1000;
+const CLAIM_BATCH_LIMIT = 1;
+const DEFAULT_MAX_CLAIM_BATCHES = 500;
 
 function slugify(value) {
   return String(value || '')
@@ -578,21 +580,43 @@ function settingsFromEnvironment(environment = process.env) {
   };
 }
 
-async function fetchSyncClaims(config = {}) {
+function normalizeSyncClaimBatch(result, expectedRunStartedAt = '') {
+  const sites = result && result.sites;
+  const runStartedAt = String((result && result.run_started_at) || '');
+  if (!Array.isArray(sites) || sites.length > CLAIM_BATCH_LIMIT) {
+    throw new Error('Hosted service returned an invalid sync claim batch');
+  }
+  if (!runStartedAt || !Number.isFinite(Date.parse(runStartedAt))) {
+    throw new Error('Hosted service did not return a valid sync run boundary');
+  }
+  if (expectedRunStartedAt && runStartedAt !== expectedRunStartedAt) {
+    throw new Error('Hosted service changed the sync run boundary');
+  }
+  return { sites, run_started_at: runStartedAt };
+}
+
+async function fetchSyncClaims(config = {}, runStartedAt = '') {
+  const body = {
+    limit: CLAIM_BATCH_LIMIT,
+    ...(runStartedAt ? { run_started_at: runStartedAt } : {})
+  };
+  if (typeof config.fetchClaims === 'function') {
+    return normalizeSyncClaimBatch(await config.fetchClaims(body), runStartedAt);
+  }
+
   const serviceUrl = normalizeHostedServiceUrl(config.serviceUrl, config);
   const workerApiKey = String(config.workerApiKey || '');
   if (!serviceUrl) throw new Error('SERVICE_URL is required for hosted claim sync');
   if (!workerApiKey) throw new Error('WORKER_API_KEY is required for hosted claim sync');
 
-  const response = await requestWithRetry(() => axios.post(`${serviceUrl}/internal/v1/sync/claims`, {}, {
+  const response = await requestWithRetry(() => axios.post(`${serviceUrl}/internal/v1/sync/claims`, body, {
     timeout: DEFAULT_TIMEOUT_MS,
     headers: {
       Authorization: `Bearer ${workerApiKey}`,
       'Content-Type': 'application/json'
     }
   }));
-  const sites = response.data && response.data.sites;
-  return Array.isArray(sites) ? sites : [];
+  return normalizeSyncClaimBatch(response.data, runStartedAt);
 }
 
 function settingsFromClaim(claim) {
@@ -732,55 +756,81 @@ async function syncJobs(config = {}) {
 }
 
 async function syncClaimedSites(config = {}) {
-  const claims = config.claims || await fetchSyncClaims(config);
   const totals = {
     imported: 0,
     filtered: 0,
     failed: 0,
     reasons: {},
-    sites: claims.length
+    sites: 0
   };
+  const staticClaims = Array.isArray(config.claims) ? config.claims : null;
+  const configuredMaximum = Number(config.maxClaimBatches);
+  const maxClaimBatches = Number.isInteger(configuredMaximum) && configuredMaximum > 0
+    ? configuredMaximum
+    : DEFAULT_MAX_CLAIM_BATCHES;
+  let runStartedAt = '';
+  let batchCount = 0;
+  let stop = false;
 
-  for (const claim of claims) {
-    try {
-      const result = await syncJobs({
-        appKey: config.appKey,
-        authorizeDelivery: () => authorizeClaimDelivery(config, claim),
-        deliveryUrl: claim.delivery_url,
-        devMode: config.devMode,
-        quiet: config.quiet,
-        settings: settingsFromClaim(claim),
-        signDeliveries: config.signDeliveries,
-        siteId: claim.site_id,
-        siteSigningSecret: claim.signing_secret,
-        source: config.source,
-        wpClient: config.wpClientFactory ? config.wpClientFactory(claim) : undefined
-      });
-
-      totals.imported += result.imported;
-      totals.filtered += result.filtered;
-      totals.failed += result.failed;
-      for (const [reason, count] of Object.entries(result.reasons)) {
-        totals.reasons[reason] = (totals.reasons[reason] || 0) + count;
-      }
-      const status = result.failed > 0 ? 'failed' : 'success';
-      const error = result.failed > 0 ? new Error(`${result.failed} job delivery failure(s)`) : null;
-      const reported = await safeReportSyncRun(config, claim, result, status, error);
-      if (!reported && status === 'success') {
-        totals.failed += 1;
-      }
-    } catch (error) {
+  while (!stop) {
+    if (!staticClaims && batchCount >= maxClaimBatches) {
       totals.failed += 1;
-      await safeReportSyncRun(config, claim, {
-        imported: 0,
-        filtered: 0,
-        failed: 1,
-        reasons: {}
-      }, 'failed', error);
-      if (!config.quiet) {
-        console.error(`Failed site ${claim.site_id || 'unknown'}: ${formatError(error)}`);
+      if (!config.quiet) console.error(`Stopped after ${maxClaimBatches} hosted claim batch(es).`);
+      break;
+    }
+
+    const batch = staticClaims
+      ? { sites: batchCount === 0 ? staticClaims : [], run_started_at: '' }
+      : await fetchSyncClaims(config, runStartedAt);
+    batchCount += 1;
+    if (!runStartedAt && batch.run_started_at) runStartedAt = batch.run_started_at;
+    if (batch.sites.length === 0) break;
+
+    for (const claim of batch.sites) {
+      totals.sites += 1;
+      try {
+        const result = await syncJobs({
+          appKey: config.appKey,
+          authorizeDelivery: () => authorizeClaimDelivery(config, claim),
+          deliveryUrl: claim.delivery_url,
+          devMode: config.devMode,
+          quiet: config.quiet,
+          settings: settingsFromClaim(claim),
+          signDeliveries: config.signDeliveries,
+          siteId: claim.site_id,
+          siteSigningSecret: claim.signing_secret,
+          source: config.source,
+          wpClient: config.wpClientFactory ? config.wpClientFactory(claim) : undefined
+        });
+
+        totals.imported += result.imported;
+        totals.filtered += result.filtered;
+        totals.failed += result.failed;
+        for (const [reason, count] of Object.entries(result.reasons)) {
+          totals.reasons[reason] = (totals.reasons[reason] || 0) + count;
+        }
+        const status = result.failed > 0 ? 'failed' : 'success';
+        const error = result.failed > 0 ? new Error(`${result.failed} job delivery failure(s)`) : null;
+        const reported = await safeReportSyncRun(config, claim, result, status, error);
+        if (!reported && status === 'success') {
+          totals.failed += 1;
+        }
+        if (!reported) stop = true;
+      } catch (error) {
+        totals.failed += 1;
+        const reported = await safeReportSyncRun(config, claim, {
+          imported: 0,
+          filtered: 0,
+          failed: 1,
+          reasons: {}
+        }, 'failed', error);
+        if (!config.quiet) {
+          console.error(`Failed site ${claim.site_id || 'unknown'}: ${formatError(error)}`);
+        }
+        if (!reported) stop = true;
       }
     }
+    if (staticClaims) break;
   }
 
   return totals;
@@ -807,7 +857,8 @@ async function main() {
         serviceUrl: process.env.SERVICE_URL,
         workerApiKey: process.env.WORKER_API_KEY,
         appKey: process.env.ST_APP_KEY,
-        devMode: process.env.DEV_MODE === 'true'
+        devMode: process.env.DEV_MODE === 'true',
+        maxClaimBatches: process.env.SYNC_MAX_SITES_PER_RUN
       })
       : await syncJobs({
         wpUrl: process.env.WP_URL,
@@ -842,6 +893,7 @@ module.exports = {
   fetchPaginated,
   formatError,
   main,
+  normalizeSyncClaimBatch,
   normalizeHostedServiceUrl,
   normalizeSinceDate,
   parseList,

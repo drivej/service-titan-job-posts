@@ -7,6 +7,7 @@ const { StripeApiClient } = require('./stripe-client');
 const { subscriptionFromStripeObject, verifyStripeSignature } = require('./stripe');
 
 const JSON_LIMIT_BYTES = 1024 * 1024;
+const SYNC_CLAIM_RUN_MAX_AGE_MS = 2 * 60 * 60 * 1000;
 const POLICY_KEYS = new Set([
   'min_price',
   'jobs_since',
@@ -256,6 +257,32 @@ function sanitizeSyncAuthorization(input) {
   return { site_id: siteId, claim_id: claimId };
 }
 
+function sanitizeSyncClaimRequest(input, now = new Date()) {
+  const limit = input.limit == null ? 1 : Number(input.limit);
+  if (!Number.isInteger(limit) || limit !== 1) {
+    throw serviceError(400, 'invalid_sync_claim_request', 'Sync claims must request a limit of 1.');
+  }
+
+  const serverNow = now instanceof Date ? now : new Date(now);
+  let runStartedAt = serverNow;
+  if (input.run_started_at) {
+    runStartedAt = new Date(String(input.run_started_at));
+    if (
+      !Number.isFinite(runStartedAt.getTime()) ||
+      runStartedAt > serverNow ||
+      serverNow.getTime() - runStartedAt.getTime() > SYNC_CLAIM_RUN_MAX_AGE_MS
+    ) {
+      throw serviceError(
+        400,
+        'invalid_sync_claim_request',
+        'run_started_at must be a recent server-issued timestamp that is not in the future.'
+      );
+    }
+  }
+
+  return { limit, run_started_at: runStartedAt };
+}
+
 async function handleRoute(request, rawBody, body, dependencies) {
   const { config, store } = dependencies;
   const stripeClient = dependencies.stripeClient || new StripeApiClient({ secretKey: config.stripeSecretKey });
@@ -469,11 +496,17 @@ async function handleRoute(request, rawBody, body, dependencies) {
 
   if (request.method === 'POST' && url.pathname === '/internal/v1/sync/claims') {
     requireWorker(request, config);
-    const claims = await store.listEligibleSyncClaims(context);
+    const claimRequest = sanitizeSyncClaimRequest(body, context.now);
+    const claims = await store.listEligibleSyncClaims({
+      ...context,
+      claimLimit: claimRequest.limit,
+      runStartedAt: claimRequest.run_started_at
+    });
     return {
       status: 200,
       payload: {
-        sites: claims
+        sites: claims,
+        run_started_at: claimRequest.run_started_at.toISOString()
       }
     };
   }
@@ -591,5 +624,6 @@ module.exports = {
   sanitizeConnection,
   sanitizeEmail,
   sanitizePolicy,
+  sanitizeSyncClaimRequest,
   sanitizeSyncRun
 };
