@@ -221,6 +221,9 @@ function shouldImportJob(job, jobType, location, settings) {
   if (job.jobStatus !== 'Completed' || !job.completedOn) {
     return { accepted: false, reason: 'not-completed' };
   }
+  if (!Number.isFinite(Date.parse(String(job.completedOn)))) {
+    return { accepted: false, reason: 'invalid-completion-date' };
+  }
 
   if (!jobType || !jobType.id) {
     return { accepted: false, reason: 'missing-job-type' };
@@ -296,7 +299,7 @@ function buildJobPayload(job, jobType, location, settings) {
     source_tenant_id: String(settings.tenant_id || ''),
     job_id: String(job.id),
     job_number: String(job.jobNumber),
-    completed_on: String(job.completedOn),
+    completed_on: new Date(String(job.completedOn)).toISOString(),
     total: Number(job.total || 0),
     city,
     state,

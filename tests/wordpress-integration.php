@@ -499,7 +499,7 @@ try {
         'source_tenant_id' => 'tenant-integration',
         'job_id'       => $run_token . '-pending',
         'job_number'   => 'INTEGRATION-PENDING',
-        'completed_on' => '2026-07-20T12:00:00Z',
+        'completed_on' => '2026-07-20T08:00:00-04:00',
         'total'        => 700,
         'city'         => 'Newark Integration Test',
         'state'        => 'NJ',
@@ -513,6 +513,10 @@ try {
     $pending_response = $api->upsert_job($pending_request);
     $pending_id = (int) $pending_response->get_data()['id'];
     $created_posts[] = $pending_id;
+    st_test_assert(
+        '2026-07-20T12:00:00Z' === get_post_meta($pending_id, 'st_job_date', true),
+        'An offset completion timestamp was not normalized to sortable UTC.'
+    );
     wp_update_post([
         'ID'           => $pending_id,
         'post_title'   => 'Editor pending title',

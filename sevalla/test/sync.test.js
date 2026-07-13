@@ -118,6 +118,10 @@ test('job filtering requires completion, a qualifying total, city, and useful so
     'invalid-total'
   );
   assert.equal(
+    shouldImportJob({ ...job, completedOn: 'not-a-date' }, jobType, location, settings).reason,
+    'invalid-completion-date'
+  );
+  assert.equal(
     shouldImportJob(job, {}, location, settings).reason,
     'missing-job-type'
   );
@@ -186,6 +190,10 @@ test('generated summary and payload are local, descriptive, and omit publication
     summaryOfWork: 'Jane Customer reported trouble at 10 Main St Unit #2. Cleared the sewer line.'
   }, jobType, location);
   const payload = buildJobPayload(job, jobType, location, settings);
+  const offsetPayload = buildJobPayload({
+    ...job,
+    completedOn: '2026-07-02T10:30:00-04:00'
+  }, jobType, location, settings);
 
   assert.match(summary, /^Drain Cleaning job completed for a local customer in Newark, NJ\./);
   assert.match(summary, /hydro-jet/);
@@ -196,6 +204,8 @@ test('generated summary and payload are local, descriptive, and omit publication
   assert.equal(payload.source_tenant_id, 'tenant-123');
   assert.equal(payload.location_slug, 'newark');
   assert.equal(payload.job_number, 'JOB-123');
+  assert.equal(payload.completed_on, '2026-07-02T14:30:00.000Z');
+  assert.equal(offsetPayload.completed_on, '2026-07-02T14:30:00.000Z');
   assert.equal(payload.sync_hash.length, 64);
   assert.equal(Object.hasOwn(payload, 'status'), false);
 });

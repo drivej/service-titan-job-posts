@@ -115,9 +115,12 @@ class ST_Sync_Sevalla_API
         if (! preg_match('/^[a-f0-9]{64}$/i', $incoming_hash)) {
             return new WP_Error('st_sync_invalid_hash', 'The sync_hash field must be a SHA-256 hex digest.', ['status' => 400]);
         }
-        if (false === strtotime($completed_on)) {
+        $completed_timestamp = strtotime($completed_on);
+        if (false === $completed_timestamp) {
             return new WP_Error('st_sync_invalid_date', 'The completed_on field must be a valid date.', ['status' => 400]);
         }
+        // Canonical UTC timestamps keep meta-value sorting chronologically correct.
+        $completed_on = gmdate('Y-m-d\TH:i:s\Z', $completed_timestamp);
         if (isset($payload['total']) && ! is_numeric($payload['total'])) {
             return new WP_Error('st_sync_invalid_total', 'The total field must be numeric when present.', ['status' => 400]);
         }
