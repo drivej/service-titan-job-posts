@@ -24,7 +24,8 @@ class ST_Sync_Admin
         add_action('add_meta_boxes_st_job', [$this, 'add_job_update_meta_box']);
         add_action('admin_post_st_sync_apply_job_update', [$this, 'apply_job_update_action']);
         add_action('admin_post_st_sync_dismiss_job_update', [$this, 'dismiss_job_update_action']);
-        add_action('admin_post_st_sync_publish_job', [$this, 'publish_job_action']);
+        add_action('admin_post_st_sync_set_job_status', [$this, 'set_job_status_action']);
+        add_action('admin_notices', [$this, 'render_job_list_notice']);
         add_filter('manage_st_job_posts_columns', [$this, 'job_list_columns']);
         add_action('manage_st_job_posts_custom_column', [$this, 'render_job_list_column'], 10, 2);
         add_filter('manage_edit-st_job_sortable_columns', [$this, 'sortable_job_list_columns']);
@@ -595,7 +596,7 @@ class ST_Sync_Admin
                 $next['st_job_completed'] = __('Completed', 'service-titan-job-post');
                 $next['st_job_service_location'] = __('Service / Location', 'service-titan-job-post');
                 $next['st_job_source_update'] = __('Source update', 'service-titan-job-post');
-                $next['st_job_publish'] = __('Publish', 'service-titan-job-post');
+                $next['st_job_publish'] = __('Publication', 'service-titan-job-post');
             }
         }
 
@@ -642,26 +643,25 @@ class ST_Sync_Admin
                 && current_user_can('edit_post', $post_id)
                 && current_user_can($post_type->cap->publish_posts);
 
-            if (in_array($status, ['pending', 'draft'], true) && $can_publish) {
+            if (in_array($status, ['pending', 'draft', 'publish'], true) && $can_publish) {
+                $target_status = 'publish' === $status ? 'pending' : 'publish';
+                $label = 'publish' === $status
+                    ? __('Unpublish', 'service-titan-job-post')
+                    : __('Publish', 'service-titan-job-post');
                 $url = wp_nonce_url(
-                    add_query_arg([
-                        'action'  => 'st_sync_publish_job',
-                        'post_id' => $post_id,
-                    ], admin_url('admin-post.php')),
-                    'st_sync_publish_job_' . $post_id
+                    add_query_arg('st_sync_job_status', $post_id . ':' . $target_status, admin_url('admin-post.php')),
+                    'st_sync_set_job_status_' . $post_id . '_' . $target_status
                 );
                 printf(
-                    '<a class="button button-small" href="%1$s" aria-label="%2$s">%3$s</a>',
+                    '<button type="submit" class="button button-small" formmethod="post" formaction="%1$s" name="action" value="st_sync_set_job_status" aria-label="%2$s">%3$s</button>',
                     esc_url($url),
-                    esc_attr(sprintf(__('Publish “%s”', 'service-titan-job-post'), get_the_title($post_id))),
-                    esc_html__('Publish', 'service-titan-job-post')
+                    esc_attr(sprintf(__('%1$s “%2$s”', 'service-titan-job-post'), $label, get_the_title($post_id))),
+                    esc_html($label)
                 );
                 return;
             }
 
-            echo 'publish' === $status
-                ? esc_html__('Published', 'service-titan-job-post')
-                : '—';
+            echo '—';
         }
     }
 
@@ -1142,53 +1142,88 @@ class ST_Sync_Admin
     /**
      * @return true|WP_Error
      */
-    public function publish_job(int $post_id)
+    public function set_job_status(int $post_id, string $target_status)
     {
         if ('st_job' !== get_post_type($post_id)) {
             return new WP_Error('st_sync_invalid_job', __('This is not a Local Job post.', 'service-titan-job-post'));
         }
 
-        if (! in_array(get_post_status($post_id), ['pending', 'draft'], true)) {
-            return new WP_Error('st_sync_invalid_job_status', __('Only pending or draft Local Jobs can be published here.', 'service-titan-job-post'));
+        $current_status = get_post_status($post_id);
+        $valid_transition = (
+            'publish' === $target_status
+            && in_array($current_status, ['pending', 'draft'], true)
+        ) || (
+            'pending' === $target_status
+            && 'publish' === $current_status
+        );
+        if (! $valid_transition) {
+            return new WP_Error('st_sync_invalid_job_status', __('This Local Job publication status has already changed. Refresh the list and try again.', 'service-titan-job-post'));
         }
 
         $updated = wp_update_post([
             'ID'          => $post_id,
-            'post_status' => 'publish',
+            'post_status' => $target_status,
         ], true);
 
         return is_wp_error($updated) ? $updated : true;
     }
 
-    public function publish_job_action(): void
+    public function set_job_status_action(): void
     {
-        $post_id = isset($_GET['post_id']) ? absint(wp_unslash($_GET['post_id'])) : 0;
+        $request = isset($_GET['st_sync_job_status']) ? sanitize_text_field(wp_unslash($_GET['st_sync_job_status'])) : '';
+        [$post_id, $target_status] = array_pad(explode(':', $request, 2), 2, '');
+        $post_id = absint($post_id);
+        $target_status = sanitize_key($target_status);
         $post_type = get_post_type_object('st_job');
         if (
             $post_id <= 0
+            || ! in_array($target_status, ['publish', 'pending'], true)
             || 'st_job' !== get_post_type($post_id)
             || ! $post_type instanceof WP_Post_Type
             || ! current_user_can('edit_post', $post_id)
             || ! current_user_can($post_type->cap->publish_posts)
         ) {
             wp_die(
-                esc_html__('You are not allowed to publish this Local Job.', 'service-titan-job-post'),
+                esc_html__('You are not allowed to change this Local Job’s publication status.', 'service-titan-job-post'),
                 '',
                 ['response' => 403]
             );
         }
 
-        check_admin_referer('st_sync_publish_job_' . $post_id);
-        $result = $this->publish_job($post_id);
+        check_admin_referer('st_sync_set_job_status_' . $post_id . '_' . $target_status);
+        $result = $this->set_job_status($post_id, $target_status);
         if (is_wp_error($result)) {
             wp_die(esc_html($result->get_error_message()), '', ['response' => 400]);
         }
 
-        wp_safe_redirect(add_query_arg([
-            'post_type' => 'st_job',
-            'published' => 1,
-        ], admin_url('edit.php')));
+        $message = 'publish' === $target_status
+            ? __('Local Job published.', 'service-titan-job-post')
+            : __('Local Job returned to pending review.', 'service-titan-job-post');
+        $this->set_notice('success', $message);
+        $redirect = wp_get_referer() ?: admin_url('edit.php?post_type=st_job');
+        wp_safe_redirect($redirect);
         exit;
+    }
+
+    public function render_job_list_notice(): void
+    {
+        $screen = get_current_screen();
+        if (! $screen || 'edit' !== $screen->base || 'st_job' !== $screen->post_type) {
+            return;
+        }
+
+        $key = 'st_sync_admin_notice_' . get_current_user_id();
+        $notice = get_transient($key);
+        if (! is_array($notice)) {
+            return;
+        }
+
+        delete_transient($key);
+        printf(
+            '<div class="notice notice-%1$s is-dismissible"><p>%2$s</p></div>',
+            esc_attr((string) ($notice['type'] ?? 'info')),
+            esc_html((string) ($notice['message'] ?? ''))
+        );
     }
 
     private function sanitize_date(string $date): string

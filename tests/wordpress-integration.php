@@ -548,12 +548,15 @@ try {
     $admin->render_job_list_column('st_job_publish', $pending_id);
     $publish_button = (string) ob_get_clean();
     st_test_assert(
-        false !== strpos($publish_button, 'st_sync_publish_job') &&
+        false !== strpos($publish_button, 'st_sync_set_job_status') &&
+        false !== strpos($publish_button, 'formmethod="post"') &&
+        false !== strpos($publish_button, 'st_sync_job_status=' . $pending_id . '%3Apublish') &&
+        false !== strpos($publish_button, 'name="action"') &&
         false !== strpos($publish_button, 'button button-small') &&
         false !== strpos($publish_button, '_wpnonce'),
         'Pending Local Job did not receive a nonce-protected Publish button in the admin list.'
     );
-    $publish_result = $admin->publish_job($pending_id);
+    $publish_result = $admin->set_job_status($pending_id, 'publish');
     st_test_assert(! is_wp_error($publish_result), 'Publishing a pending Local Job from the admin list failed.');
     st_test_assert('publish' === get_post_status($pending_id), 'Admin-list Publish did not publish the Local Job.');
     st_test_assert(
@@ -562,15 +565,60 @@ try {
         'Admin-list Publish changed reviewed Local Job content.'
     );
     st_test_assert(
-        is_wp_error($admin->publish_job($pending_id)),
+        is_wp_error($admin->set_job_status($pending_id, 'publish')),
         'Admin-list Publish allowed an already-published Local Job to be published again.'
     );
     ob_start();
     $admin->render_job_list_column('st_job_publish', $pending_id);
-    $published_label = (string) ob_get_clean();
+    $unpublish_button = (string) ob_get_clean();
     st_test_assert(
-        false === strpos($published_label, 'st_sync_publish_job') && false !== strpos($published_label, 'Published'),
-        'Published Local Job retained an actionable Publish button.'
+        false !== strpos($unpublish_button, 'st_sync_set_job_status') &&
+        false !== strpos($unpublish_button, 'formmethod="post"') &&
+        false !== strpos($unpublish_button, 'st_sync_job_status=' . $pending_id . '%3Apending') &&
+        false !== strpos($unpublish_button, 'Unpublish'),
+        'Published Local Job did not toggle to an Unpublish button.'
+    );
+    $unpublish_result = $admin->set_job_status($pending_id, 'pending');
+    st_test_assert(! is_wp_error($unpublish_result), 'Unpublishing a Local Job from the admin list failed.');
+    st_test_assert('pending' === get_post_status($pending_id), 'Admin-list Unpublish did not return the Local Job to pending review.');
+    st_test_assert(
+        is_wp_error($admin->set_job_status($pending_id, 'pending')) &&
+        is_wp_error($admin->set_job_status($pending_id, 'private')),
+        'Admin-list publication toggle accepted a stale or unsupported transition.'
+    );
+    st_test_assert(
+        'Editor pending title' === get_the_title($pending_id) &&
+        false !== strpos((string) get_post_field('post_content', $pending_id), 'Editor pending copy'),
+        'Admin-list Unpublish changed reviewed Local Job content.'
+    );
+    $administrator_role = get_role('administrator');
+    $admin_had_publish_cap = $administrator_role && $administrator_role->has_cap('publish_st_jobs');
+    if ($administrator_role) {
+        $administrator_role->remove_cap('publish_st_jobs');
+        wp_set_current_user(0);
+        wp_set_current_user((int) $admins[0]);
+    }
+    ob_start();
+    $admin->render_job_list_column('st_job_publish', $pending_id);
+    $unauthorized_publication = (string) ob_get_clean();
+    if ($administrator_role && $admin_had_publish_cap) {
+        $administrator_role->add_cap('publish_st_jobs');
+        wp_set_current_user(0);
+        wp_set_current_user((int) $admins[0]);
+    }
+    st_test_assert(
+        false === strpos($unauthorized_publication, 'st_sync_set_job_status'),
+        'Publication button was shown to a user without the publish capability.'
+    );
+    $draft_id = wp_insert_post([
+        'post_type'   => 'st_job',
+        'post_status' => 'draft',
+        'post_title'  => 'Draft publication toggle test',
+    ]);
+    $created_posts[] = $draft_id;
+    st_test_assert(
+        ! is_wp_error($admin->set_job_status((int) $draft_id, 'publish')) && 'publish' === get_post_status($draft_id),
+        'Admin-list publication toggle did not publish a draft Local Job.'
     );
 
     $post_type = get_post_type_object('st_job');
