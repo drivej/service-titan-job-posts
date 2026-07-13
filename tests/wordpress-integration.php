@@ -215,6 +215,7 @@ try {
             'The nested job permalink did not resolve back to its post.'
         );
     }
+    $approved_id = $job_post_id;
 
     $service_term = get_term_by('slug', $service_slug, 'st_service');
     $location_term = get_term_by('slug', $location_slug, 'st_location');
@@ -340,7 +341,6 @@ try {
         'Recent jobs shortcode did not reuse the ItemList JSON-LD renderer.'
     );
 
-    $approved_id = end($created_posts);
     $details_rendered = st_test_render_job_details($approved_id);
     $details_schemas = st_test_json_ld_scripts($details_rendered);
     $service_schema = $details_schemas[0] ?? [];
