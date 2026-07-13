@@ -130,6 +130,28 @@ test('activates an eligible subscription and returns only activation-time secret
   });
 });
 
+test('license site limits prevent one subscription from activating multiple websites', async () => {
+  const store = new MemoryStore(createSeed());
+  await withService(store, async ({ request }) => {
+    const first = await activate(request);
+    assert.match(first.site_id, /^site_/);
+
+    const second = await request('/v1/licenses/activate', {
+      method: 'POST',
+      body: {
+        license_key: 'LOCAL-TEST-LICENSE',
+        site_url: 'https://second.example.com',
+        installation_id: 'wp-install-2',
+        delivery_url: 'https://second.example.com/wp-json/st-sync/v1/jobs',
+        plugin_version: '2.0.0'
+      }
+    });
+
+    assert.equal(second.response.status, 409);
+    assert.equal(second.json.code, 'site_limit_reached');
+  });
+});
+
 test('health and readiness endpoints distinguish process liveness from dependency readiness', async () => {
   const store = new MemoryStore(createSeed());
   await withService(store, async ({ request }) => {
