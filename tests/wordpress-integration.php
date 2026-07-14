@@ -511,13 +511,56 @@ try {
     );
     wp_update_post([
         'ID'           => $approved_id,
+        'post_title'   => 'Approved editorial title',
+        'post_name'    => 'approved-editorial-' . $run_token,
+        'post_content' => '<!-- wp:st-sync/job-details /--><!-- wp:paragraph --><p>Approved editorial body.</p><!-- /wp:paragraph -->',
         'post_excerpt' => 'Approved editorial copy',
     ]);
+    $approved_title = (string) get_post_field('post_title', $approved_id);
+    $approved_name = (string) get_post_field('post_name', $approved_id);
     $approved_content = (string) get_post_field('post_content', $approved_id);
+    $approved_excerpt = (string) get_post_field('post_excerpt', $approved_id);
     $approved_permalink = get_permalink($approved_id);
     $approved_date = get_post_meta($approved_id, 'st_job_date', true);
+    $display_meta_keys = [
+        'st_job_price',
+        'st_job_date',
+        'st_job_city',
+        'st_job_state',
+        'st_job_service',
+        'st_job_summary',
+        'st_job_location_id',
+        'st_job_type_id',
+        'st_job_type_name',
+    ];
+    $approved_display_meta = [];
+    foreach ($display_meta_keys as $meta_key) {
+        $approved_display_meta[$meta_key] = get_post_meta($approved_id, $meta_key, true);
+    }
     $approved_service_terms = wp_get_post_terms($approved_id, 'st_service', ['fields' => 'ids']);
     $approved_location_terms = wp_get_post_terms($approved_id, 'st_location', ['fields' => 'ids']);
+    $unchanged_source_retry = $payload;
+    $unchanged_source_retry['retry_marker'] = $run_token;
+    $unchanged_response = $api->upsert_job(st_test_request($unchanged_source_retry, $test_site));
+    st_test_assert(
+        $unchanged_response instanceof WP_REST_Response &&
+        false === ($unchanged_response->get_data()['changed'] ?? true) &&
+        $approved_title === get_post_field('post_title', $approved_id) &&
+        $approved_name === get_post_field('post_name', $approved_id) &&
+        $approved_content === get_post_field('post_content', $approved_id) &&
+        $approved_excerpt === get_post_field('post_excerpt', $approved_id) &&
+        'publish' === get_post_status($approved_id) &&
+        $approved_permalink === get_permalink($approved_id) &&
+        $approved_service_terms === wp_get_post_terms($approved_id, 'st_service', ['fields' => 'ids']) &&
+        $approved_location_terms === wp_get_post_terms($approved_id, 'st_location', ['fields' => 'ids']),
+        'An unchanged future sync overwrote WordPress editorial fields.'
+    );
+    foreach ($approved_display_meta as $meta_key => $meta_value) {
+        st_test_assert(
+            $meta_value === get_post_meta($approved_id, $meta_key, true),
+            'An unchanged future sync overwrote the ' . $meta_key . ' display value.'
+        );
+    }
     $changed = [
         'source_tenant_id' => 'tenant-integration',
         'job_id'       => $run_token . '-4',
@@ -559,12 +602,21 @@ try {
         'A source update did not recover after a transient metadata failure.'
     );
     st_test_assert(
-        $approved_content === get_post_field('post_content', $approved_id),
-        'A repeat sync overwrote published editorial content.'
+        $approved_title === get_post_field('post_title', $approved_id) &&
+        $approved_name === get_post_field('post_name', $approved_id) &&
+        $approved_content === get_post_field('post_content', $approved_id) &&
+        $approved_excerpt === get_post_field('post_excerpt', $approved_id),
+        'A changed future sync overwrote published WordPress editorial fields.'
     );
     st_test_assert('publish' === get_post_status($approved_id), 'A repeat sync removed published status.');
     st_test_assert($approved_permalink === get_permalink($approved_id), 'A repeat sync changed the approved permalink.');
     st_test_assert($approved_date === get_post_meta($approved_id, 'st_job_date', true), 'A repeat sync changed the approved display date.');
+    foreach ($approved_display_meta as $meta_key => $meta_value) {
+        st_test_assert(
+            $meta_value === get_post_meta($approved_id, $meta_key, true),
+            'A changed future sync overwrote the ' . $meta_key . ' display value.'
+        );
+    }
     st_test_assert(
         $approved_service_terms === wp_get_post_terms($approved_id, 'st_service', ['fields' => 'ids']),
         'A repeat sync moved the approved post to another service.'
@@ -688,9 +740,19 @@ try {
     wp_update_post([
         'ID'           => $pending_id,
         'post_title'   => 'Editor pending title',
+        'post_name'    => 'editor-pending-' . $run_token,
         'post_content' => '<p>Editor pending copy.</p>',
         'post_excerpt' => 'Editor pending excerpt.',
     ]);
+    $pending_name = (string) get_post_field('post_name', $pending_id);
+    $pending_terms = [
+        'service'  => wp_get_post_terms($pending_id, 'st_service', ['fields' => 'ids']),
+        'location' => wp_get_post_terms($pending_id, 'st_location', ['fields' => 'ids']),
+    ];
+    $pending_display_meta = [];
+    foreach ($display_meta_keys as $meta_key) {
+        $pending_display_meta[$meta_key] = get_post_meta($pending_id, $meta_key, true);
+    }
     $pending_payload['summary'] = 'A later sync must not replace pending editor work.';
     $pending_payload['sync_hash'] = hash('sha256', $run_token . '-pending-changed');
     $pending_changed_request = st_test_request($pending_payload, $test_site);
@@ -698,9 +760,19 @@ try {
     st_test_assert('pending' === get_post_status($pending_id), 'Pending review status was changed by a repeat sync.');
     st_test_assert(
         'Editor pending title' === get_the_title($pending_id) &&
-        false !== strpos((string) get_post_field('post_content', $pending_id), 'Editor pending copy'),
+        $pending_name === get_post_field('post_name', $pending_id) &&
+        false !== strpos((string) get_post_field('post_content', $pending_id), 'Editor pending copy') &&
+        'Editor pending excerpt.' === get_post_field('post_excerpt', $pending_id) &&
+        $pending_terms['service'] === wp_get_post_terms($pending_id, 'st_service', ['fields' => 'ids']) &&
+        $pending_terms['location'] === wp_get_post_terms($pending_id, 'st_location', ['fields' => 'ids']),
         'A repeat sync overwrote pending editorial work.'
     );
+    foreach ($pending_display_meta as $meta_key => $meta_value) {
+        st_test_assert(
+            $meta_value === get_post_meta($pending_id, $meta_key, true),
+            'A pending-post sync overwrote the ' . $meta_key . ' display value.'
+        );
+    }
     ob_start();
     $admin->render_job_list_column('st_job_publish', $pending_id);
     $publish_button = (string) ob_get_clean();
@@ -776,6 +848,48 @@ try {
     st_test_assert(
         ! is_wp_error($admin->set_job_status((int) $draft_id, 'publish')) && 'publish' === get_post_status($draft_id),
         'Admin-list publication toggle did not publish a draft Local Job.'
+    );
+
+    $trashed_payload = $pending_payload;
+    $trashed_payload['job_id'] = $run_token . '-trashed';
+    $trashed_payload['job_number'] = 'INTEGRATION-TRASHED';
+    $trashed_payload['summary'] = 'Original job that an editor later moved to the trash.';
+    $trashed_payload['sync_hash'] = hash('sha256', $run_token . '-trashed');
+    $trashed_response = $api->upsert_job(st_test_request($trashed_payload, $test_site));
+    $trashed_id = (int) $trashed_response->get_data()['id'];
+    $created_posts[] = $trashed_id;
+    wp_update_post([
+        'ID'           => $trashed_id,
+        'post_title'   => 'Editor trashed this Local Job',
+        'post_content' => '<p>Editorial content must not be resurrected.</p>',
+        'post_excerpt' => 'Editorial trash decision.',
+    ]);
+    wp_trash_post($trashed_id);
+    $trashed_payload['city'] = 'Changed City Must Stay Pending';
+    $trashed_payload['summary'] = 'Changed source data must not recreate this trashed job.';
+    $trashed_payload['sync_hash'] = hash('sha256', $run_token . '-trashed-changed');
+    $trashed_changed_response = $api->upsert_job(st_test_request($trashed_payload, $test_site));
+    $matching_trashed_ids = get_posts([
+        'post_type'      => 'st_job',
+        'post_status'    => ['publish', 'pending', 'draft', 'private', 'future', 'trash'],
+        'posts_per_page' => -1,
+        'fields'         => 'ids',
+        'meta_query'     => [
+            'relation' => 'AND',
+            ['key' => 'st_job_tenant_id', 'value' => $trashed_payload['source_tenant_id']],
+            ['key' => 'st_job_id', 'value' => $trashed_payload['job_id']],
+        ],
+    ]);
+    st_test_assert(
+        $trashed_changed_response instanceof WP_REST_Response &&
+        $trashed_id === (int) ($trashed_changed_response->get_data()['id'] ?? 0) &&
+        [$trashed_id] === array_map('intval', $matching_trashed_ids) &&
+        'trash' === get_post_status($trashed_id) &&
+        'Editor trashed this Local Job' === get_the_title($trashed_id) &&
+        false !== strpos((string) get_post_field('post_content', $trashed_id), 'must not be resurrected') &&
+        'Editorial trash decision.' === get_post_field('post_excerpt', $trashed_id) &&
+        '1' === get_post_meta($trashed_id, 'st_job_update_available', true),
+        'A future sync recreated, restored, or overwrote an editor-trashed Local Job.'
     );
 
     $post_type = get_post_type_object('st_job');

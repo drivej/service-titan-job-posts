@@ -321,7 +321,7 @@ class ST_Sync_Sevalla_API
     {
         $posts = get_posts([
             'post_type'              => 'st_job',
-            'post_status'            => ['publish', 'pending', 'draft', 'private', 'future'],
+            'post_status'            => ['publish', 'pending', 'draft', 'private', 'future', 'trash'],
             'posts_per_page'         => 1,
             'fields'                 => 'ids',
             'meta_query'             => [
@@ -347,7 +347,7 @@ class ST_Sync_Sevalla_API
         // Migrate posts created before tenant-scoped source keys were introduced.
         $legacy = get_posts([
             'post_type'      => 'st_job',
-            'post_status'    => ['publish', 'pending', 'draft', 'private', 'future'],
+            'post_status'    => ['publish', 'pending', 'draft', 'private', 'future', 'trash'],
             'posts_per_page' => 1,
             'fields'         => 'ids',
             'meta_query'     => [
