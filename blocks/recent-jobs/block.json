@@ -5,7 +5,7 @@
   "title": "Recent Local Jobs",
   "category": "widgets",
   "icon": "location-alt",
-  "description": "Shows recently approved jobs for a service and city.",
+  "description": "Shows approved service jobs matching ZIP codes inherited from the current page hierarchy.",
   "usesContext": ["postId", "postType"],
   "attributes": {
     "serviceSlug": {

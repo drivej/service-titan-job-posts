@@ -108,12 +108,24 @@ class ST_Sync_Sevalla_API
         $summary = sanitize_textarea_field((string) $payload['summary']);
         $completed_on = sanitize_text_field((string) $payload['completed_on']);
         $incoming_hash = sanitize_text_field((string) $payload['sync_hash']);
+        if (isset($payload['legacy_sync_hash']) && ! is_scalar($payload['legacy_sync_hash'])) {
+            return new WP_Error('st_sync_invalid_legacy_hash', 'The legacy_sync_hash field must be a SHA-256 hex digest when present.', ['status' => 400]);
+        }
+        $legacy_hash = sanitize_text_field((string) ($payload['legacy_sync_hash'] ?? ''));
+
+        $zip_code = $this->normalize_zip_code($payload['zip_code'] ?? '');
+        if (is_wp_error($zip_code)) {
+            return $zip_code;
+        }
 
         if ('' === $service_slug || '' === $location_slug || '' === $summary) {
             return new WP_Error('st_sync_invalid_content', 'Service, location, and summary must be valid.', ['status' => 400]);
         }
         if (! preg_match('/^[a-f0-9]{64}$/i', $incoming_hash)) {
             return new WP_Error('st_sync_invalid_hash', 'The sync_hash field must be a SHA-256 hex digest.', ['status' => 400]);
+        }
+        if ('' !== $legacy_hash && ! preg_match('/^[a-f0-9]{64}$/i', $legacy_hash)) {
+            return new WP_Error('st_sync_invalid_legacy_hash', 'The legacy_sync_hash field must be a SHA-256 hex digest when present.', ['status' => 400]);
         }
         $completed_timestamp = strtotime($completed_on);
         if (false === $completed_timestamp) {
@@ -139,6 +151,47 @@ class ST_Sync_Sevalla_API
         $existing_status = $existing_id ? get_post_status($existing_id) : false;
         $post_status = $existing_status ?: 'pending';
         $stored_hash = $existing_id ? (string) get_post_meta($existing_id, 'st_job_sync_hash', true) : '';
+
+        // The first ZIP-aware delivery changes the source hash even when no
+        // editorial source fields changed. A matching legacy hash proves this
+        // is a metadata-only migration, so backfill ZIP routing data without
+        // creating a false editorial update. The new hash is the commit marker.
+        $stored_zip_code = $existing_id ? (string) get_post_meta($existing_id, 'st_job_zip_code', true) : '';
+        $is_legacy_zip_backfill = (
+            $existing_id &&
+            '' !== $zip_code &&
+            '' === $stored_zip_code &&
+            '1' !== (string) get_post_meta($existing_id, 'st_job_update_available', true) &&
+            $legacy_hash &&
+            $stored_hash &&
+            hash_equals($stored_hash, $legacy_hash)
+        );
+        if ($is_legacy_zip_backfill) {
+            $zip_written = false !== update_post_meta($existing_id, 'st_job_zip_code', $zip_code);
+            $hash_written = $zip_written && false !== update_post_meta($existing_id, 'st_job_sync_hash', $incoming_hash);
+            if (! $hash_written) {
+                if ($zip_written) {
+                    delete_post_meta($existing_id, 'st_job_zip_code', $zip_code);
+                }
+                return new WP_Error(
+                    'st_sync_meta_write_failed',
+                    'The ZIP code backfill could not be stored completely. Retry the delivery.',
+                    ['status' => 500]
+                );
+            }
+            if ($delivery_id) {
+                set_transient($delivery_key, 1, 30 * DAY_IN_SECONDS);
+            }
+
+            return new WP_REST_Response([
+                'id'             => $existing_id,
+                'created'        => false,
+                'changed'        => false,
+                'zip_backfilled' => true,
+                'status'         => $existing_status,
+                'link'           => get_permalink($existing_id),
+            ], 200);
+        }
 
         if ($existing_id && $incoming_hash && hash_equals($stored_hash, $incoming_hash)) {
             if ($delivery_id) {
@@ -170,6 +223,7 @@ class ST_Sync_Sevalla_API
                 'st_job_pending_location_id'    => sanitize_text_field((string) ($payload['location_id'] ?? '')),
                 'st_job_pending_job_type_id'    => sanitize_text_field((string) ($payload['job_type_id'] ?? '')),
                 'st_job_pending_job_type_name'  => $job_type_name,
+                'st_job_pending_zip_code'       => $zip_code,
                 'st_job_pending_total'          => isset($payload['total']) ? (string) (float) $payload['total'] : '',
                 'st_job_update_available'       => '1',
                 // The source hash is written last and acts as the retry commit marker.
@@ -234,6 +288,7 @@ class ST_Sync_Sevalla_API
             'st_job_location_id'     => sanitize_text_field((string) ($payload['location_id'] ?? '')),
             'st_job_type_id'         => sanitize_text_field((string) ($payload['job_type_id'] ?? '')),
             'st_job_type_name'       => $job_type_name,
+            'st_job_zip_code'        => $zip_code,
             'st_job_update_available'=> '0',
             // Written last so retries never trust a partially initialized post.
             'st_job_sync_hash'       => $incoming_hash,
@@ -379,6 +434,32 @@ class ST_Sync_Sevalla_API
             }
         }
         return true;
+    }
+
+    /**
+     * Normalize US ZIP and ZIP+4 input to the five-digit routing value.
+     * Missing ZIP data remains compatible with older hosted workers.
+     *
+     * @return string|WP_Error
+     */
+    private function normalize_zip_code($value)
+    {
+        if (null === $value) {
+            return '';
+        }
+        if (! is_scalar($value)) {
+            return new WP_Error('st_sync_invalid_zip_code', 'The zip_code field must be a US ZIP code when present.', ['status' => 400]);
+        }
+
+        $value = trim((string) $value);
+        if ('' === $value) {
+            return '';
+        }
+        if (! preg_match('/^(\d{5})(?:-\d{4})?$/', $value, $matches)) {
+            return new WP_Error('st_sync_invalid_zip_code', 'The zip_code field must be a five-digit US ZIP code or ZIP+4.', ['status' => 400]);
+        }
+
+        return $matches[1];
     }
 
     private function acquire_lock(string $lock_name): bool

@@ -109,10 +109,10 @@ class ST_Sync_Admin
             'textarea',
             __('Optional comma- or line-separated exact Job Type names.', 'service-titan-job-post')
         );
-        $this->add_field('recent_jobs_count', __('Jobs shown on location pages', 'service-titan-job-post'), 'number');
+        $this->add_field('recent_jobs_count', __('Jobs shown on service pages', 'service-titan-job-post'), 'number');
         $this->add_field(
             'auto_append_recent_jobs',
-            __('Automatically show on location pages', 'service-titan-job-post'),
+            __('Automatically show on service pages', 'service-titan-job-post'),
             'checkbox',
             __('Append Recent Local Jobs to matching nested Pages, such as plumbing/newark, unless the page already contains the block or shortcode.', 'service-titan-job-post')
         );
@@ -444,6 +444,11 @@ class ST_Sync_Admin
                 'incoming' => $pending['state'],
             ],
             [
+                'label'    => __('ZIP code', 'service-titan-job-post'),
+                'current'  => $current['zip_code'],
+                'incoming' => $pending['zip_code'],
+            ],
+            [
                 'label'    => __('Service', 'service-titan-job-post'),
                 'current'  => $current['service_name'],
                 'incoming' => $pending['service_name'],
@@ -503,6 +508,7 @@ class ST_Sync_Admin
         $summary = sanitize_textarea_field($pending['summary']);
         $city = sanitize_text_field($pending['city']);
         $state = sanitize_text_field($pending['state']);
+        $zip_code = sanitize_text_field($pending['zip_code']);
         $service_slug = sanitize_title($pending['service_slug']);
         $service_name = sanitize_text_field($pending['service_name']);
         if ('' === $service_name && '' !== $service_slug) {
@@ -534,6 +540,7 @@ class ST_Sync_Admin
             'st_job_date'        => $pending['completed_on'],
             'st_job_city'        => $city,
             'st_job_state'       => $state,
+            'st_job_zip_code'    => $zip_code,
             'st_job_service'     => $service_name,
             'st_job_location_id' => $pending['location_id'],
             'st_job_type_id'     => $pending['job_type_id'],
@@ -543,6 +550,9 @@ class ST_Sync_Admin
             if ('' !== trim((string) $value)) {
                 update_post_meta($post_id, $key, sanitize_text_field((string) $value));
             }
+        }
+        if ('' === $zip_code) {
+            delete_post_meta($post_id, 'st_job_zip_code');
         }
         if ('' !== trim((string) $pending['total']) && is_numeric($pending['total'])) {
             update_post_meta($post_id, 'st_job_price', (float) $pending['total']);
@@ -887,7 +897,7 @@ class ST_Sync_Admin
         ?>
         <h2><?php esc_html_e('Location page coverage', 'service-titan-job-post'); ?></h2>
         <p class="description">
-            <?php esc_html_e('Recent Local Jobs can auto-append to nested Pages whose slugs match imported service and location terms.', 'service-titan-job-post'); ?>
+            <?php esc_html_e('Recent Local Jobs can auto-append to service Pages beneath location Pages whose ZIP lists match imported jobs.', 'service-titan-job-post'); ?>
         </p>
         <?php if (empty($rows)) : ?>
             <p><?php esc_html_e('No imported job locations are available yet.', 'service-titan-job-post'); ?></p>
@@ -906,7 +916,7 @@ class ST_Sync_Admin
                     <tr>
                         <td>
                             <?php echo esc_html($row['service_name'] . ' / ' . $row['location_name']); ?><br>
-                            <code><?php echo esc_html('/' . $row['service_slug'] . '/' . $row['location_slug'] . '/'); ?></code>
+                            <code><?php echo esc_html('/' . $row['location_slug'] . '/' . $row['service_slug'] . '/'); ?></code>
                         </td>
                         <td><?php echo esc_html(number_format_i18n((int) $row['count'])); ?></td>
                         <td>
@@ -982,7 +992,11 @@ class ST_Sync_Admin
 
     private function location_page_id(string $service_slug, string $location_slug): int
     {
-        $page = get_page_by_path($service_slug . '/' . $location_slug, OBJECT, 'page');
+        $page = get_page_by_path($location_slug . '/' . $service_slug, OBJECT, 'page');
+        if (! $page instanceof WP_Post) {
+            // Continue recognizing pages created by versions before 2.3.0.
+            $page = get_page_by_path($service_slug . '/' . $location_slug, OBJECT, 'page');
+        }
         return $page instanceof WP_Post ? (int) $page->ID : 0;
     }
 
@@ -1017,39 +1031,38 @@ class ST_Sync_Admin
             return $existing;
         }
 
-        $service_page = get_page_by_path($service_slug, OBJECT, 'page');
-        if (! $service_page instanceof WP_Post) {
-            $service_page_id = wp_insert_post([
+        $location_page = get_page_by_path($location_slug, OBJECT, 'page');
+        if (! $location_page instanceof WP_Post) {
+            $location_page_id = wp_insert_post([
                 'post_type'    => 'page',
                 'post_status'  => 'draft',
-                'post_title'   => $this->title_from_slug($service_slug),
-                'post_name'    => $service_slug,
+                'post_title'   => $this->title_from_slug($location_slug),
+                'post_name'    => $location_slug,
                 'post_content' => '',
             ], true);
-            if (is_wp_error($service_page_id)) {
-                return $service_page_id;
+            if (is_wp_error($location_page_id)) {
+                return $location_page_id;
             }
         } else {
-            $service_page_id = (int) $service_page->ID;
+            $location_page_id = (int) $location_page->ID;
         }
 
-        $location_page_id = wp_insert_post([
+        $service_page_id = wp_insert_post([
             'post_type'    => 'page',
             'post_status'  => 'draft',
-            'post_parent'  => (int) $service_page_id,
-            'post_title'   => $this->title_from_slug($location_slug),
-            'post_name'    => $location_slug,
-            'post_content' => $this->recent_jobs_block_content($service_slug, $location_slug),
+            'post_parent'  => (int) $location_page_id,
+            'post_title'   => $this->title_from_slug($service_slug),
+            'post_name'    => $service_slug,
+            'post_content' => $this->recent_jobs_block_content($service_slug),
         ], true);
 
-        return $location_page_id;
+        return $service_page_id;
     }
 
-    private function recent_jobs_block_content(string $service_slug, string $location_slug): string
+    private function recent_jobs_block_content(string $service_slug): string
     {
         $attributes = wp_json_encode([
-            'serviceSlug'  => $service_slug,
-            'locationSlug' => $location_slug,
+            'serviceSlug' => $service_slug,
         ], JSON_UNESCAPED_SLASHES);
 
         return '<!-- wp:st-sync/recent-jobs ' . ($attributes ?: '{}') . ' /-->';
@@ -1307,6 +1320,7 @@ class ST_Sync_Admin
             'location_id'   => (string) get_post_meta($post_id, 'st_job_pending_location_id', true),
             'job_type_id'   => (string) get_post_meta($post_id, 'st_job_pending_job_type_id', true),
             'job_type_name' => (string) get_post_meta($post_id, 'st_job_pending_job_type_name', true),
+            'zip_code'      => (string) get_post_meta($post_id, 'st_job_pending_zip_code', true),
             'total'         => (string) get_post_meta($post_id, 'st_job_pending_total', true),
         ];
     }
@@ -1327,6 +1341,7 @@ class ST_Sync_Admin
             'completed_on'  => (string) get_post_meta($post_id, 'st_job_date', true),
             'city'          => (string) get_post_meta($post_id, 'st_job_city', true),
             'state'         => (string) get_post_meta($post_id, 'st_job_state', true),
+            'zip_code'      => (string) get_post_meta($post_id, 'st_job_zip_code', true),
             'service_name'  => $service_name,
             'location_slug' => $this->first_term_slug($post_id, 'st_location'),
             'job_type_name' => (string) get_post_meta($post_id, 'st_job_type_name', true),
@@ -1347,6 +1362,7 @@ class ST_Sync_Admin
             'st_job_pending_location_id',
             'st_job_pending_job_type_id',
             'st_job_pending_job_type_name',
+            'st_job_pending_zip_code',
             'st_job_pending_total',
         ] as $key) {
             delete_post_meta($post_id, $key);

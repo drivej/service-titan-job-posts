@@ -9,6 +9,7 @@ const {
   environmentUrls,
   fetchPaginated,
   normalizeHostedServiceUrl,
+  normalizeZipCode,
   parseServiceMappings,
   redactSensitiveDetails,
   resolveService,
@@ -64,6 +65,14 @@ const location = {
 test('slugify creates URL-safe location and service values', () => {
   assert.equal(slugify(' Air Conditioning & Heating '), 'air-conditioning-heating');
   assert.equal(slugify('São José'), 'sao-jose');
+});
+
+test('ZIP codes normalize to a canonical five-digit routing value', () => {
+  assert.equal(normalizeZipCode('07102'), '07102');
+  assert.equal(normalizeZipCode(' 90723-1234 '), '90723');
+  assert.equal(normalizeZipCode('7102'), '');
+  assert.equal(normalizeZipCode('90723 1234'), '');
+  assert.equal(normalizeZipCode(null), '');
 });
 
 test('service mappings override automatic classification', () => {
@@ -214,11 +223,38 @@ test('generated summary and payload are local, descriptive, and omit publication
   assert.equal(payload.service_slug, 'plumbing');
   assert.equal(payload.source_tenant_id, 'tenant-123');
   assert.equal(payload.location_slug, 'newark');
+  assert.equal(payload.zip_code, '07102');
   assert.equal(payload.job_number, 'JOB-123');
   assert.equal(payload.completed_on, '2026-07-02T14:30:00.000Z');
   assert.equal(offsetPayload.completed_on, '2026-07-02T14:30:00.000Z');
   assert.equal(payload.sync_hash.length, 64);
+  assert.equal(payload.legacy_sync_hash.length, 64);
+  assert.notEqual(payload.sync_hash, payload.legacy_sync_hash);
   assert.equal(Object.hasOwn(payload, 'status'), false);
+});
+
+test('ZIP changes affect the current hash while preserving the legacy content hash', () => {
+  const original = buildJobPayload(job, jobType, location, settings);
+  const changed = buildJobPayload(job, jobType, {
+    ...location,
+    address: { ...location.address, zip: '07001-4321' }
+  }, settings);
+  const missing = buildJobPayload(job, jobType, {
+    ...location,
+    address: { ...location.address, zip: '' }
+  }, settings);
+  const malformed = buildJobPayload(job, jobType, {
+    ...location,
+    address: { ...location.address, zip: 'not-a-zip' }
+  }, settings);
+
+  assert.equal(changed.zip_code, '07001');
+  assert.notEqual(changed.sync_hash, original.sync_hash);
+  assert.equal(changed.legacy_sync_hash, original.legacy_sync_hash);
+  assert.equal(Object.hasOwn(missing, 'zip_code'), false);
+  assert.equal(missing.sync_hash, missing.legacy_sync_hash);
+  assert.equal(Object.hasOwn(malformed, 'zip_code'), false);
+  assert.equal(malformed.sync_hash, malformed.legacy_sync_hash);
 });
 
 test('delivery signature binds the site, timestamp, delivery ID, and exact body', () => {

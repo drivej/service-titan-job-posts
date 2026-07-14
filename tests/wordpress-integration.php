@@ -128,6 +128,22 @@ function st_test_render_job_details(int $post_id): string
     return $block->render();
 }
 
+function st_test_render_recent_jobs_for_page(int $post_id, int $count = 12): string
+{
+    $parsed_block = [
+        'blockName'    => 'st-sync/recent-jobs',
+        'attrs'        => ['jobsToShow' => $count],
+        'innerBlocks'  => [],
+        'innerHTML'    => '',
+        'innerContent' => [],
+    ];
+    $block = new WP_Block($parsed_block, [
+        'postId'   => $post_id,
+        'postType' => 'page',
+    ]);
+    return $block->render();
+}
+
 try {
     delete_site_transient('st_sync_github_release_v1');
     $github_requests = 0;
@@ -344,6 +360,7 @@ try {
             'location_slug'=> $location_slug,
             'location_id'  => 'location-' . $index,
             'job_type_id'  => 'type-1',
+            'zip_code'     => '07102-1234',
             'service_slug' => $service_slug,
             'service_name' => 'Plumbing Integration Test',
             'summary'      => sprintf('Integration job number %d cleared a blocked drain with professional equipment.', $index),
@@ -359,6 +376,17 @@ try {
         $created_posts[] = $job_post_id;
 
         st_test_assert('pending' === get_post_status($job_post_id), 'New job was not pending review.');
+        st_test_assert(
+            '07102' === get_post_meta($job_post_id, 'st_job_zip_code', true),
+            'A ZIP+4 payload was not stored as its canonical five-digit ZIP code.'
+        );
+        $registered_job_meta = get_registered_meta_keys('post', 'st_job');
+        st_test_assert(
+            isset($registered_job_meta['st_job_zip_code'], $registered_job_meta['st_job_pending_zip_code']) &&
+            false === $registered_job_meta['st_job_zip_code']['show_in_rest'] &&
+            false === $registered_job_meta['st_job_pending_zip_code']['show_in_rest'],
+            'Job ZIP metadata was not registered as private post metadata.'
+        );
         st_test_assert(
             has_block('st-sync/job-details', (string) get_post_field('post_content', $job_post_id)),
             'New job did not use the Job Details block by default.'
@@ -415,6 +443,96 @@ try {
         'Recent jobs block did not emit Service ItemList JSON-LD.'
     );
 
+    // New location-first hierarchy: /location/service/. The leaf page supplies
+    // the service slug and inherits the nearest usable ZIP list in its ancestry.
+    $zip_location_id = wp_insert_post([
+        'post_type'   => 'page',
+        'post_status' => 'publish',
+        'post_title'  => 'Paramount Integration Test',
+        'post_name'   => 'paramount-' . $run_token,
+    ], true);
+    st_test_assert(! is_wp_error($zip_location_id), 'Could not create ZIP-routed location page.');
+    $created_posts[] = (int) $zip_location_id;
+    update_post_meta((int) $zip_location_id, 'my_zip_codes', ['07102']);
+
+    $zip_wrapper_id = wp_insert_post([
+        'post_type'   => 'page',
+        'post_status' => 'publish',
+        'post_parent' => (int) $zip_location_id,
+        'post_title'  => 'Services Integration Test',
+        'post_name'   => 'services-' . $run_token,
+    ], true);
+    st_test_assert(! is_wp_error($zip_wrapper_id), 'Could not create intermediate service wrapper page.');
+    $created_posts[] = (int) $zip_wrapper_id;
+
+    $zip_service_id = wp_insert_post([
+        'post_type'   => 'page',
+        'post_status' => 'publish',
+        'post_parent' => (int) $zip_wrapper_id,
+        'post_title'  => 'Plumbing Integration Test',
+        'post_name'   => $service_slug,
+    ], true);
+    st_test_assert(! is_wp_error($zip_service_id), 'Could not create ZIP-routed service page.');
+    $created_posts[] = (int) $zip_service_id;
+
+    $wrong_zip_job_id = wp_insert_post([
+        'post_type'    => 'st_job',
+        'post_status'  => 'publish',
+        'post_title'   => 'Wrong ZIP Integration Job',
+        'post_excerpt' => 'This job must only appear when a nearer ancestor overrides the location ZIP list.',
+        'meta_input'   => [
+            'st_job_date'     => '2026-07-10T12:00:00Z',
+            'st_job_zip_code' => '99999',
+        ],
+    ], true);
+    st_test_assert(! is_wp_error($wrong_zip_job_id), 'Could not create wrong-ZIP routing fixture.');
+    $created_posts[] = (int) $wrong_zip_job_id;
+    wp_set_object_terms((int) $wrong_zip_job_id, $service_slug, 'st_service');
+
+    $wrong_service_slug = 'electrical-' . $run_token;
+    $wrong_service_job_id = wp_insert_post([
+        'post_type'    => 'st_job',
+        'post_status'  => 'publish',
+        'post_title'   => 'Wrong Service Integration Job',
+        'post_excerpt' => 'This job shares the location ZIP but must not appear for plumbing.',
+        'meta_input'   => [
+            'st_job_date'     => '2026-07-11T12:00:00Z',
+            'st_job_zip_code' => '07102',
+        ],
+    ], true);
+    st_test_assert(! is_wp_error($wrong_service_job_id), 'Could not create wrong-service routing fixture.');
+    $created_posts[] = (int) $wrong_service_job_id;
+    wp_set_object_terms((int) $wrong_service_job_id, $wrong_service_slug, 'st_service');
+    $wrong_service_term = get_term_by('slug', $wrong_service_slug, 'st_service');
+    if ($wrong_service_term) {
+        $created_terms[] = ['id' => (int) $wrong_service_term->term_id, 'taxonomy' => 'st_service'];
+    }
+
+    $zip_routed = st_test_render_recent_jobs_for_page((int) $zip_service_id);
+    st_test_assert(
+        4 === substr_count($zip_routed, 'st-recent-jobs__card') &&
+        false !== strpos($zip_routed, 'Integration job number 4') &&
+        false === strpos($zip_routed, 'Wrong ZIP Integration Job') &&
+        false === strpos($zip_routed, 'Wrong Service Integration Job'),
+        'Location-first routing did not require both inherited ZIP and leaf-page service.'
+    );
+    st_test_assert(
+        false !== strpos($zip_routed, 'Paramount Integration Test') &&
+        false === strpos($zip_routed, '07102'),
+        'ZIP-routed output exposed private ZIP metadata or omitted the inherited location name.'
+    );
+
+    update_post_meta((int) $zip_wrapper_id, 'my_zip_codes', ['99999']);
+    $nearest_zip_routed = st_test_render_recent_jobs_for_page((int) $zip_service_id);
+    st_test_assert(
+        1 === substr_count($nearest_zip_routed, 'st-recent-jobs__card') &&
+        false !== strpos($nearest_zip_routed, 'Wrong ZIP Integration Job') &&
+        false === strpos($nearest_zip_routed, 'Integration job number 4') &&
+        false !== strpos($nearest_zip_routed, 'Services Integration Test') &&
+        false === strpos($nearest_zip_routed, '99999'),
+        'The nearest nonempty ancestor ZIP list did not override a more distant location list.'
+    );
+
     update_option('st_sync_options', array_merge(
         is_array($previous_sync_options) ? $previous_sync_options : [],
         ['recent_jobs_count' => '2']
@@ -461,28 +579,28 @@ try {
         'post_content' => '',
     ]);
     $admin_helper = new ST_Sync_Admin();
-    $created_location_id = $admin_helper->create_location_page('hvac-' . $run_token, 'montclair-' . $run_token);
-    st_test_assert(! is_wp_error($created_location_id), 'Location page creation failed.');
-    $created_service_page = get_page_by_path('hvac-' . $run_token, OBJECT, 'page');
+    $created_service_id = $admin_helper->create_location_page('hvac-' . $run_token, 'montclair-' . $run_token);
+    st_test_assert(! is_wp_error($created_service_id), 'Location/service page creation failed.');
+    $created_location_page = get_page_by_path('montclair-' . $run_token, OBJECT, 'page');
     st_test_assert(
-        $created_service_page instanceof WP_Post &&
-        (int) $created_service_page->ID === wp_get_post_parent_id((int) $created_location_id),
-        'Location page creation did not create the expected service/location page hierarchy.'
+        $created_location_page instanceof WP_Post &&
+        (int) $created_location_page->ID === wp_get_post_parent_id((int) $created_service_id),
+        'Page creation did not create the expected location/service hierarchy.'
     );
     st_test_assert(
-        'draft' === get_post_status((int) $created_service_page->ID) &&
-        'draft' === get_post_status((int) $created_location_id),
-        'Location page creation did not leave generated pages in draft review.'
+        'draft' === get_post_status((int) $created_location_page->ID) &&
+        'draft' === get_post_status((int) $created_service_id),
+        'Location/service page creation did not leave generated pages in draft review.'
     );
-    $created_location_content = (string) get_post_field('post_content', (int) $created_location_id);
+    $created_service_content = (string) get_post_field('post_content', (int) $created_service_id);
     st_test_assert(
-        has_block('st-sync/recent-jobs', $created_location_content) &&
-        false !== strpos($created_location_content, 'hvac-' . $run_token) &&
-        false !== strpos($created_location_content, 'montclair-' . $run_token),
-        'Location page creation did not seed a service/location Recent Local Jobs block.'
+        has_block('st-sync/recent-jobs', $created_service_content) &&
+        false !== strpos($created_service_content, 'hvac-' . $run_token) &&
+        false === strpos($created_service_content, 'montclair-' . $run_token),
+        'Service page creation did not seed a ZIP-inheriting Recent Local Jobs block.'
     );
-    $created_posts[] = (int) $created_location_id;
-    $created_posts[] = (int) $created_service_page->ID;
+    $created_posts[] = (int) $created_service_id;
+    $created_posts[] = (int) $created_location_page->ID;
     $shortcode_rendered = do_shortcode(sprintf(
         '[st_recent_jobs service="%s" location="%s" count="2" heading="Shortcode Jobs" intro="Custom local proof from reviewed jobs."]',
         esc_attr($service_slug),
@@ -572,6 +690,7 @@ try {
         'location_slug'=> 'trenton-integration-test',
         'location_id'  => 'location-updated',
         'job_type_id'  => 'type-updated',
+        'zip_code'     => '08608',
         'service_slug' => 'hvac-integration-test',
         'service_name' => 'HVAC Integration Test',
         'summary'      => 'This generated update must not replace approved editorial copy.',
@@ -633,6 +752,7 @@ try {
         $changed['summary'] === get_post_meta($approved_id, 'st_job_pending_summary', true) &&
         $changed['city'] === get_post_meta($approved_id, 'st_job_pending_city', true) &&
         $changed['service_name'] === get_post_meta($approved_id, 'st_job_pending_service_name', true) &&
+        $changed['zip_code'] === get_post_meta($approved_id, 'st_job_pending_zip_code', true) &&
         $changed['location_id'] === get_post_meta($approved_id, 'st_job_pending_location_id', true),
         'Changed source details were not saved for editorial comparison.'
     );
@@ -683,9 +803,11 @@ try {
         'Applying a reviewed update did not update the generated excerpt.'
     );
     st_test_assert($changed['completed_on'] === get_post_meta($approved_id, 'st_job_date', true), 'Applying a reviewed update did not update the job date.');
+    st_test_assert($changed['zip_code'] === get_post_meta($approved_id, 'st_job_zip_code', true), 'Applying a reviewed update did not update the job ZIP code.');
     st_test_assert((float) $changed['total'] === (float) get_post_meta($approved_id, 'st_job_price', true), 'Applying a reviewed update did not update the job total.');
     st_test_assert('0' === get_post_meta($approved_id, 'st_job_update_available', true), 'Applying a reviewed update did not clear the update flag.');
     st_test_assert('' === get_post_meta($approved_id, 'st_job_pending_summary', true), 'Applying a reviewed update did not clear pending source details.');
+    st_test_assert('' === get_post_meta($approved_id, 'st_job_pending_zip_code', true), 'Applying a reviewed update did not clear the pending ZIP code.');
     st_test_assert(
         has_block('st-sync/job-details', (string) get_post_field('post_content', $approved_id)),
         'Applying a reviewed update removed the default Job Details block.'
@@ -713,6 +835,75 @@ try {
     st_test_assert(
         is_wp_error($api->upsert_job(st_test_request($bad_hash, $test_site))),
         'An invalid sync_hash was accepted.'
+    );
+
+    $bad_zip = $changed;
+    $bad_zip['job_id'] = $run_token . '-bad-zip';
+    $bad_zip['job_number'] = 'INTEGRATION-BAD-ZIP';
+    $bad_zip['zip_code'] = '0710';
+    $bad_zip['sync_hash'] = hash('sha256', $run_token . '-bad-zip');
+    $bad_zip_result = $api->upsert_job(st_test_request($bad_zip, $test_site));
+    st_test_assert(
+        is_wp_error($bad_zip_result) && 'st_sync_invalid_zip_code' === $bad_zip_result->get_error_code(),
+        'A malformed nonempty ZIP code was accepted.'
+    );
+
+    // Simulate the first delivery from a ZIP-aware worker for a job created by
+    // the previous payload schema. It must backfill private routing metadata
+    // without flagging an editorial source update.
+    $legacy_hash = (string) get_post_meta($approved_id, 'st_job_sync_hash', true);
+    delete_post_meta($approved_id, 'st_job_zip_code');
+    $legacy_backfill = $changed;
+    $legacy_backfill['legacy_sync_hash'] = $legacy_hash;
+    $legacy_backfill['sync_hash'] = hash('sha256', $run_token . '-zip-aware-hash');
+    $legacy_backfill['zip_code'] = '08608-4444';
+    $legacy_backfill_response = $api->upsert_job(st_test_request($legacy_backfill, $test_site));
+    st_test_assert(
+        $legacy_backfill_response instanceof WP_REST_Response &&
+        true === ($legacy_backfill_response->get_data()['zip_backfilled'] ?? false) &&
+        '08608' === get_post_meta($approved_id, 'st_job_zip_code', true) &&
+        '0' === get_post_meta($approved_id, 'st_job_update_available', true) &&
+        $legacy_backfill['sync_hash'] === get_post_meta($approved_id, 'st_job_sync_hash', true) &&
+        $approved_content === get_post_field('post_content', $approved_id),
+        'A legacy-hash ZIP backfill created an editorial update or changed reviewed content.'
+    );
+
+    $reviewed_zip_change = $legacy_backfill;
+    $reviewed_zip_change['zip_code'] = '08609';
+    $reviewed_zip_change['legacy_sync_hash'] = $legacy_backfill['sync_hash'];
+    $reviewed_zip_change['sync_hash'] = hash('sha256', $run_token . '-reviewed-zip-change');
+    $reviewed_zip_response = $api->upsert_job(st_test_request($reviewed_zip_change, $test_site));
+    st_test_assert(
+        $reviewed_zip_response instanceof WP_REST_Response &&
+        '08608' === get_post_meta($approved_id, 'st_job_zip_code', true) &&
+        '08609' === get_post_meta($approved_id, 'st_job_pending_zip_code', true) &&
+        '1' === get_post_meta($approved_id, 'st_job_update_available', true),
+        'A later ZIP change bypassed review or was not staged for comparison.'
+    );
+    $dismiss_zip_result = $admin->dismiss_pending_job_update($approved_id);
+    st_test_assert(
+        ! is_wp_error($dismiss_zip_result) &&
+        '08608' === get_post_meta($approved_id, 'st_job_zip_code', true) &&
+        '' === get_post_meta($approved_id, 'st_job_pending_zip_code', true) &&
+        '0' === get_post_meta($approved_id, 'st_job_update_available', true),
+        'Dismissing a ZIP change did not preserve the reviewed ZIP or clear pending metadata.'
+    );
+
+    $removed_zip = $reviewed_zip_change;
+    unset($removed_zip['zip_code'], $removed_zip['legacy_sync_hash']);
+    $removed_zip['sync_hash'] = hash('sha256', $run_token . '-removed-zip');
+    $removed_zip_response = $api->upsert_job(st_test_request($removed_zip, $test_site));
+    st_test_assert(
+        $removed_zip_response instanceof WP_REST_Response &&
+        '' === get_post_meta($approved_id, 'st_job_pending_zip_code', true) &&
+        '1' === get_post_meta($approved_id, 'st_job_update_available', true),
+        'Removing a source ZIP was not staged for review.'
+    );
+    $apply_removed_zip = $admin->apply_pending_job_update($approved_id);
+    st_test_assert(
+        ! is_wp_error($apply_removed_zip) &&
+        '' === get_post_meta($approved_id, 'st_job_zip_code', true),
+        'Applying a reviewed ZIP removal left stale routing metadata.'
     );
 
     $pending_payload = [
@@ -757,6 +948,19 @@ try {
     $pending_payload['sync_hash'] = hash('sha256', $run_token . '-pending-changed');
     $pending_changed_request = st_test_request($pending_payload, $test_site);
     $api->upsert_job($pending_changed_request);
+
+    $pending_zip_delivery = $pending_payload;
+    $pending_zip_delivery['zip_code'] = '07102';
+    $pending_zip_delivery['legacy_sync_hash'] = $pending_payload['sync_hash'];
+    $pending_zip_delivery['sync_hash'] = hash('sha256', $run_token . '-pending-zip');
+    $pending_zip_response = $api->upsert_job(st_test_request($pending_zip_delivery, $test_site));
+    st_test_assert(
+        $pending_zip_response instanceof WP_REST_Response &&
+        '1' === get_post_meta($pending_id, 'st_job_update_available', true) &&
+        '' === get_post_meta($pending_id, 'st_job_zip_code', true) &&
+        '07102' === get_post_meta($pending_id, 'st_job_pending_zip_code', true),
+        'A legacy ZIP delivery bypassed an already-pending editorial update.'
+    );
     st_test_assert('pending' === get_post_status($pending_id), 'Pending review status was changed by a repeat sync.');
     st_test_assert(
         'Editor pending title' === get_the_title($pending_id) &&

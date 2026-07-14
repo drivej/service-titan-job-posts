@@ -12,9 +12,48 @@ class ST_Sync_Blocks
     public function __construct()
     {
         add_action('init', [$this, 'register_blocks']);
+        add_action('acf/init', [$this, 'register_location_zip_field']);
         add_filter('the_content', [$this, 'append_recent_jobs_to_content'], 20);
         add_shortcode('st_recent_jobs', [$this, 'recent_jobs_shortcode']);
         add_shortcode('service_titan_recent_jobs', [$this, 'recent_jobs_shortcode']);
+    }
+
+    /**
+     * Register the location ZIP list when Advanced Custom Fields is available.
+     */
+    public function register_location_zip_field(): void
+    {
+        if (! function_exists('acf_add_local_field_group')) {
+            return;
+        }
+
+        acf_add_local_field_group([
+            'key' => 'group_st_location_zip_codes',
+            'title' => __('ServiceTitan Location Coverage', 'service-titan-job-post'),
+            'fields' => [[
+                'key' => 'field_st_my_zip_codes',
+                'label' => __('Service area ZIP codes', 'service-titan-job-post'),
+                'name' => 'my_zip_codes',
+                'type' => 'select',
+                'instructions' => __('Enter each covered ZIP code as a separate option. Child service pages inherit the nearest ZIP list in their parent chain.', 'service-titan-job-post'),
+                'choices' => [],
+                'allow_null' => 0,
+                'multiple' => 1,
+                'ui' => 1,
+                'create_options' => 1,
+                'save_options' => 1,
+                'return_format' => 'value',
+            ]],
+            'location' => [[[
+                'param' => 'post_type',
+                'operator' => '==',
+                'value' => 'page',
+            ]]],
+            'position' => 'normal',
+            'style' => 'default',
+            'active' => true,
+            'show_in_rest' => 0,
+        ]);
     }
 
     public function register_blocks(): void
@@ -80,8 +119,8 @@ class ST_Sync_Blocks
     {
         unset($content);
         $context = $this->resolve_service_location($attributes, $block);
-        if ('' === $context['service'] || '' === $context['location']) {
-            return $this->editor_notice(__('Choose a service and location, or place this block on a nested service/location page.', 'service-titan-job-post'));
+        if ('' === $context['service'] || (empty($context['zip_codes']) && '' === $context['location'])) {
+            return $this->editor_notice(__('Choose a service and location, or place this block on a service page beneath a location with ZIP codes.', 'service-titan-job-post'));
         }
 
         $options = wp_parse_args(get_option('st_sync_options', []), ST_Sync_Admin::defaults());
@@ -91,7 +130,7 @@ class ST_Sync_Blocks
             ? min(12, $requested_count)
             : min(12, max(1, $default_count));
 
-        $query = new WP_Query([
+        $query_args = [
             'post_type'              => 'st_job',
             'post_status'            => 'publish',
             'posts_per_page'         => $count,
@@ -100,7 +139,21 @@ class ST_Sync_Blocks
             'order'                  => 'DESC',
             'no_found_rows'          => true,
             'update_post_meta_cache' => true,
-            'tax_query'              => [
+            'tax_query'              => [[
+                'taxonomy' => 'st_service',
+                'field'    => 'slug',
+                'terms'    => $context['service'],
+            ]],
+        ];
+
+        if (! empty($context['zip_codes'])) {
+            $query_args['meta_query'] = [[
+                'key'     => 'st_job_zip_code',
+                'value'   => $context['zip_codes'],
+                'compare' => 'IN',
+            ]];
+        } else {
+            $query_args['tax_query'] = [
                 'relation' => 'AND',
                 [
                     'taxonomy' => 'st_service',
@@ -112,17 +165,23 @@ class ST_Sync_Blocks
                     'field'    => 'slug',
                     'terms'    => $context['location'],
                 ],
-            ],
-        ]);
+            ];
+        }
+
+        $query = new WP_Query($query_args);
 
         if (! $query->have_posts()) {
             return $this->editor_notice(__('No approved jobs match this service and location yet.', 'service-titan-job-post'));
         }
 
         $service_term = get_term_by('slug', $context['service'], 'st_service');
-        $location_term = get_term_by('slug', $context['location'], 'st_location');
         $service_name = $service_term ? $service_term->name : ucwords(str_replace('-', ' ', $context['service']));
-        $location_name = $location_term ? $location_term->name : ucwords(str_replace('-', ' ', $context['location']));
+        if (! empty($context['zip_codes'])) {
+            $location_name = $context['location_name'];
+        } else {
+            $location_term = get_term_by('slug', $context['location'], 'st_location');
+            $location_name = $location_term ? $location_term->name : ucwords(str_replace('-', ' ', $context['location']));
+        }
         $heading = trim((string) ($attributes['heading'] ?? ''));
         if ('' === $heading) {
             $heading = sprintf(
@@ -252,10 +311,12 @@ class ST_Sync_Blocks
             return $content;
         }
 
-        $markup = $this->render_recent_jobs([
-            'serviceSlug'  => $context['service'],
-            'locationSlug' => $context['location'],
-        ], '', null);
+        $render_attributes = ['serviceSlug' => $context['service']];
+        if (empty($context['zip_codes'])) {
+            $render_attributes['locationSlug'] = $context['location'];
+        }
+
+        $markup = $this->render_recent_jobs($render_attributes, '', null);
 
         return '' === $markup ? $content : $content . "\n\n" . $markup;
     }
@@ -266,7 +327,12 @@ class ST_Sync_Blocks
         $location = sanitize_title((string) ($attributes['locationSlug'] ?? ''));
 
         if ($service && $location) {
-            return compact('service', 'location');
+            return [
+                'service' => $service,
+                'location' => $location,
+                'location_name' => ucwords(str_replace('-', ' ', $location)),
+                'zip_codes' => [],
+            ];
         }
 
         $post_id = $block && isset($block->context['postId'])
@@ -281,6 +347,16 @@ class ST_Sync_Blocks
         $page = get_post($post_id);
 
         if ($page instanceof WP_Post) {
+            $zip_context = $this->resolve_inherited_zip_codes($page->ID);
+            if (! empty($zip_context['zip_codes'])) {
+                return [
+                    'service' => $service ?: sanitize_title($page->post_name),
+                    'location' => sanitize_title($zip_context['slug']),
+                    'location_name' => $zip_context['name'],
+                    'zip_codes' => $zip_context['zip_codes'],
+                ];
+            }
+
             $location = $location ?: $page->post_name;
             if (! $service && $page->post_parent) {
                 $parent = get_post($page->post_parent);
@@ -297,7 +373,73 @@ class ST_Sync_Blocks
             }
         }
 
-        return compact('service', 'location');
+        return [
+            'service' => $service,
+            'location' => $location,
+            'location_name' => ucwords(str_replace('-', ' ', $location)),
+            'zip_codes' => [],
+        ];
+    }
+
+    /**
+     * Find the nearest page in the current page's ancestry with a usable ZIP list.
+     * The current page is included so a service page can deliberately override it.
+     */
+    private function resolve_inherited_zip_codes(int $post_id): array
+    {
+        $page_ids = array_merge([$post_id], get_post_ancestors($post_id));
+
+        foreach ($page_ids as $page_id) {
+            $raw = function_exists('get_field')
+                ? get_field('my_zip_codes', $page_id, false)
+                : null;
+            if (null === $raw || false === $raw || '' === $raw) {
+                $raw = get_post_meta($page_id, 'my_zip_codes', true);
+            }
+            $zip_codes = $this->normalize_zip_list($raw);
+            if (empty($zip_codes)) {
+                continue;
+            }
+
+            $page = get_post($page_id);
+            if (! $page instanceof WP_Post) {
+                continue;
+            }
+
+            return [
+                'zip_codes' => $zip_codes,
+                'slug' => $page->post_name,
+                'name' => get_the_title($page),
+            ];
+        }
+
+        return ['zip_codes' => [], 'slug' => '', 'name' => ''];
+    }
+
+    /**
+     * Accept ACF's flat array and resiliently support simple delimited meta values.
+     */
+    private function normalize_zip_list($raw): array
+    {
+        if (is_string($raw)) {
+            $raw = preg_split('/[\\s,]+/', $raw, -1, PREG_SPLIT_NO_EMPTY);
+        } elseif (! is_array($raw)) {
+            $raw = [];
+        }
+
+        $zip_codes = [];
+        foreach ($raw as $value) {
+            if (! is_scalar($value)) {
+                continue;
+            }
+            $value = trim((string) $value);
+            if (! preg_match('/^(\\d{5})(?:-\\d{4})?$/', $value, $matches)) {
+                continue;
+            }
+            $zip_codes[] = $matches[1];
+        }
+
+        return array_values(array_unique($zip_codes));
     }
 
     private function contains_recent_jobs_renderer(string $content): bool

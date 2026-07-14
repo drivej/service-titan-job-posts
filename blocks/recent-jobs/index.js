@@ -23,13 +23,13 @@
             { title: __('Job query', 'service-titan-job-post') },
             el(TextControl, {
               label: __('Service slug', 'service-titan-job-post'),
-              help: __('Optional on a nested service/location page.', 'service-titan-job-post'),
+              help: __('Optional. By default the current service page slug is used.', 'service-titan-job-post'),
               value: attributes.serviceSlug,
               onChange: function (value) { setAttributes({ serviceSlug: value }); }
             }),
             el(TextControl, {
               label: __('Location slug', 'service-titan-job-post'),
-              help: __('Optional on a nested service/location page.', 'service-titan-job-post'),
+              help: __('Legacy override. New service pages inherit ZIP codes from the nearest parent location page.', 'service-titan-job-post'),
               value: attributes.locationSlug,
               onChange: function (value) { setAttributes({ locationSlug: value }); }
             }),

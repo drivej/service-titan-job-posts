@@ -3,7 +3,7 @@
  * Plugin Name:       ServiceTitan Local Job Content
  * Plugin URI:        https://github.com/drivej/service-titan-job-posts
  * Description:       Imports completed ServiceTitan jobs as reviewable, location-specific content.
- * Version:           2.2.0
+ * Version:           2.3.0
  * Author:            Drive
  * License:           GPLv2 or later
  * Update URI:        https://github.com/drivej/service-titan-job-posts
@@ -16,7 +16,7 @@ if (! defined('ABSPATH')) {
     exit;
 }
 
-define('ST_SYNC_VERSION', '2.2.0');
+define('ST_SYNC_VERSION', '2.3.0');
 define('ST_SYNC_PLUGIN_FILE', __FILE__);
 define('ST_SYNC_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ST_SYNC_DEFAULT_SERVICE_URL', '');

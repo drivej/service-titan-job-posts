@@ -19,30 +19,36 @@ jobs into privacy-conscious, locally relevant website content.
 7. WordPress creates the job as **Pending Review** and assigns service/location
    terms.
 8. An editor reviews and publishes the post.
-9. The Recent Local Jobs block shows the newest approved jobs on the matching
-   service/location page.
+9. The Recent Local Jobs block shows the newest approved jobs whose service and
+   ZIP code match the current service page and its nearest configured ancestor.
 
 The worker never sends a publish status. WordPress enforces the review queue.
 Later syncs preserve editorial copy on published posts.
 
 ## URL and page model
 
-Create ordinary nested WordPress Pages:
+Create ordinary nested WordPress Pages, with each location above its services:
 
 ```text
-Plumbing              /plumbing/
-└── Newark             /plumbing/newark/
+Paramount              /paramount/
+└── Drain Cleaning     /paramount/drain-cleaning/
 ```
 
-Add the **Recent Local Jobs** block to the Newark page. With its service and
-location fields blank, the block infers `plumbing` and `newark` from the page
-hierarchy. You can set the slugs explicitly when a site's page structure is
-different. The block renders a local intro paragraph using the reviewed
-service/city/job count, or you can provide custom intro copy in the block
-settings.
+Set the location page's ACF **Service area ZIP codes** field (`my_zip_codes`) to
+a flat list of covered ZIP codes, then add the **Recent Local Jobs** block to a
+child service page. With its fields blank, the block uses the service page slug
+(`drain-cleaning`) and walks up the full parent chain until it finds the nearest
+nonempty ZIP list. Matching requires both the service and one of those ZIPs.
+A nearer page can therefore override a broader ancestor without combining their
+coverage. The block renders a local intro paragraph using the reviewed
+service/location/job count, or you can provide custom intro copy.
+
+The plugin registers this ACF field automatically when Advanced Custom Fields
+is active. Its reader also accepts a simple comma-, space-, or newline-delimited
+`my_zip_codes` page-meta value, so rendering remains safe if ACF is unavailable.
 
 By default, the plugin also appends Recent Local Jobs automatically to matching
-nested location Pages such as `/plumbing/newark/`. It skips that automatic
+nested service Pages such as `/paramount/drain-cleaning/`. It skips that automatic
 output when the page already contains the block or shortcode, and the behavior
 can be disabled in the Local Jobs Sync settings.
 
@@ -259,7 +265,10 @@ environment contract, and the included Dockerfile runs the same one-shot
 command.
 
 Set `DEV_MODE=true` to use `mock-jobs.json` instead of calling ServiceTitan. Dev
-mode still sends the resulting jobs to the configured WordPress site.
+mode still sends the resulting jobs to the configured WordPress site. The
+included drain-cleaning fixture is located in Paramount (`90723`); set
+`ST_SERVICE_MAPPINGS=201=drain-cleaning` in the local worker environment so it
+matches the demo `/paramount/drain-cleaning/` service page exactly.
 
 ## Editorial workflow
 
@@ -279,9 +288,9 @@ with counts and direct links for pending jobs and source updates that need
 review, plus a **Location page coverage** panel that shows whether imported
 service/location pairs have matching nested Pages for automatic block output
 and whether those pages are drafts or published.
-When a matching page is missing, admins can create a draft service/location
-page hierarchy from that panel; the created location page includes the Recent
-Local Jobs block with the matching slugs already set.
+When a matching page is missing, admins can create a draft location/service
+page hierarchy from that panel; the created service page includes the Recent
+Local Jobs block. Add the location's `my_zip_codes` list before publishing it.
 
 New imports use the **Job Details** block as their default post body. The
 generated summary is stored in the excerpt and job meta, so the block can render

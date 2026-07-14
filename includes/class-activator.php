@@ -92,10 +92,10 @@ class ST_Sync_Activator
             'supports'            => ['title', 'editor', 'excerpt', 'revisions'],
             'has_archive'         => false,
             'exclude_from_search' => false,
-            'rewrite'             => [
-                'slug'       => '%st_service%/%st_location%/job',
-                'with_front' => false,
-            ],
+            // Exact job rewrite rules are registered by ST_Sync_Permalinks.
+            // Letting the post type generate a tag-based permastruct also
+            // creates broad two-segment rules that shadow /location/service/ Pages.
+            'rewrite'             => false,
             'capability_type'     => ['st_job', 'st_jobs'],
             'map_meta_cap'        => true,
             'capabilities'        => [
@@ -119,6 +119,7 @@ class ST_Sync_Activator
             'st_job_location_id',
             'st_job_type_id',
             'st_job_type_name',
+            'st_job_zip_code',
             'st_job_sync_hash',
             'st_job_update_available',
             'st_job_pending_summary',
@@ -131,6 +132,7 @@ class ST_Sync_Activator
             'st_job_pending_location_id',
             'st_job_pending_job_type_id',
             'st_job_pending_job_type_name',
+            'st_job_pending_zip_code',
             'st_job_pending_total',
         ];
 

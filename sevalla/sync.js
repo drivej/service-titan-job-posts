@@ -201,6 +201,11 @@ function locationLabel(location = {}) {
   return [cleanText(address.city), cleanText(address.state)].filter(Boolean).join(', ');
 }
 
+function normalizeZipCode(value) {
+  const match = String(value == null ? '' : value).trim().match(/^(\d{5})(?:-\d{4})?$/);
+  return match ? match[1] : '';
+}
+
 function sentence(value) {
   const text = cleanText(value);
   if (!text) return '';
@@ -310,9 +315,10 @@ function buildSummary(job, jobType, location, settings = {}) {
 function buildJobPayload(job, jobType, location, settings) {
   const city = cleanText(location.address && location.address.city);
   const state = cleanText(location.address && location.address.state);
+  const zipCode = normalizeZipCode(location.address && location.address.zip);
   const service = resolveService(jobType, settings);
   const summary = buildSummary(job, jobType, location, settings);
-  const core = {
+  const legacyCore = {
     source_tenant_id: String(settings.tenant_id || ''),
     job_id: String(job.id),
     job_number: String(job.jobNumber),
@@ -328,10 +334,15 @@ function buildJobPayload(job, jobType, location, settings) {
     service_name: service.name,
     summary
   };
+  const core = {
+    ...legacyCore,
+    ...(zipCode ? { zip_code: zipCode } : {})
+  };
 
   return {
     ...core,
-    sync_hash: crypto.createHash('sha256').update(JSON.stringify(core)).digest('hex')
+    sync_hash: crypto.createHash('sha256').update(JSON.stringify(core)).digest('hex'),
+    legacy_sync_hash: crypto.createHash('sha256').update(JSON.stringify(legacyCore)).digest('hex')
   };
 }
 
@@ -896,6 +907,7 @@ module.exports = {
   normalizeSyncClaimBatch,
   normalizeHostedServiceUrl,
   normalizeSinceDate,
+  normalizeZipCode,
   parseList,
   parseServiceMappings,
   redactSensitiveDetails,
