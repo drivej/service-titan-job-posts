@@ -41,7 +41,7 @@ if ('' !== trim($bootstrap_output)) {
     echo $bootstrap_output;
 }
 
-if (! class_exists('ST_Sync_Sevalla_API')) {
+if (! class_exists('ST_Sync_Sevalla_API') || ! class_exists('ST_Sync_Plugin_Updater')) {
     fwrite(STDERR, "ServiceTitan Local Job Content must be active.\n");
     exit(2);
 }
@@ -74,6 +74,7 @@ update_option('st_sync_site', $test_site, false);
 $had_sync_options = false !== get_option('st_sync_options', false);
 $previous_sync_options = get_option('st_sync_options', []);
 $previous_permalink_structure = get_option('permalink_structure');
+$previous_updater_cache = get_site_transient('st_sync_github_release_v1');
 
 function st_test_assert($condition, string $message): void
 {
@@ -128,6 +129,162 @@ function st_test_render_job_details(int $post_id): string
 }
 
 try {
+    delete_site_transient('st_sync_github_release_v1');
+    $github_requests = 0;
+    $release_payload = [
+        'tag_name'     => 'v99.0.0',
+        'draft'        => false,
+        'prerelease'   => false,
+        'published_at' => '2026-07-14T10:00:00Z',
+        'body'         => "Updater security release.\n<script>alert('no')</script>",
+        'assets'       => [
+            [
+                'name'                 => 'service-titan-job-post.zip',
+                'browser_download_url' => 'https://github.com/drivej/service-titan-job-posts/releases/download/v99.0.0/service-titan-job-post.zip',
+            ],
+            [
+                'name'                 => 'service-titan-job-post.zip.sha256',
+                'browser_download_url' => 'https://github.com/drivej/service-titan-job-posts/releases/download/v99.0.0/service-titan-job-post.zip.sha256',
+            ],
+        ],
+    ];
+    $github_http_mock = static function ($preempt, $args, $url) use (&$github_requests, $release_payload) {
+        unset($args);
+        if ('https://api.github.com/repos/drivej/service-titan-job-posts/releases/latest' !== $url) {
+            return $preempt;
+        }
+        ++$github_requests;
+        return [
+            'headers'  => [],
+            'body'     => wp_json_encode($release_payload),
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'cookies'  => [],
+            'filename' => null,
+        ];
+    };
+    add_filter('pre_http_request', $github_http_mock, 10, 3);
+    $updater = new ST_Sync_Plugin_Updater();
+    $update = $updater->filter_plugin_update(
+        false,
+        ['UpdateURI' => 'https://github.com/drivej/service-titan-job-posts', 'Version' => ST_SYNC_VERSION],
+        plugin_basename(ST_SYNC_PLUGIN_FILE),
+        []
+    );
+    st_test_assert(
+        is_array($update) &&
+        '99.0.0' === ($update['version'] ?? '') &&
+        '6.4' === ($update['requires'] ?? '') &&
+        '7.0.1' === ($update['tested'] ?? '') &&
+        'https://github.com/drivej/service-titan-job-posts/releases/download/v99.0.0/service-titan-job-post.zip' === ($update['package'] ?? ''),
+        'Native updater did not advertise the reviewed GitHub release asset.'
+    );
+    $updater->filter_plugin_update(
+        false,
+        ['UpdateURI' => 'https://github.com/drivej/service-titan-job-posts', 'Version' => ST_SYNC_VERSION],
+        plugin_basename(ST_SYNC_PLUGIN_FILE),
+        []
+    );
+    st_test_assert(1 === $github_requests, 'Native updater did not cache GitHub release metadata per request.');
+    $plugin_information = $updater->filter_plugin_information(
+        false,
+        'plugin_information',
+        (object) ['slug' => 'service-titan-job-post']
+    );
+    st_test_assert(
+        is_object($plugin_information) &&
+        '99.0.0' === ($plugin_information->version ?? '') &&
+        false === strpos((string) ($plugin_information->sections['changelog'] ?? ''), '<script>') &&
+        false !== strpos((string) ($plugin_information->sections['changelog'] ?? ''), '&lt;script&gt;'),
+        'Native updater plugin details were missing or rendered untrusted release HTML.'
+    );
+    $unrelated_update = $updater->filter_plugin_update(
+        ['preserved' => true],
+        ['UpdateURI' => 'https://github.com/example/other'],
+        'other/other.php',
+        []
+    );
+    st_test_assert(
+        true === ($unrelated_update['preserved'] ?? false),
+        'Native updater interfered with another GitHub-hosted plugin.'
+    );
+    $hostile_release = $release_payload;
+    $hostile_release['assets'][0]['browser_download_url'] = 'https://attacker.example/plugin.zip';
+    st_test_assert(
+        is_wp_error($updater->normalize_release($hostile_release)),
+        'Native updater accepted a release package outside the allowlisted repository.'
+    );
+    $duplicate_release = $release_payload;
+    $duplicate_release['assets'][] = $duplicate_release['assets'][0];
+    st_test_assert(
+        is_wp_error($updater->normalize_release($duplicate_release)),
+        'Native updater accepted duplicate package assets.'
+    );
+    $unstable_release = $release_payload;
+    $unstable_release['prerelease'] = true;
+    st_test_assert(
+        is_wp_error($updater->normalize_release($unstable_release)),
+        'Native updater accepted a prerelease.'
+    );
+    $checksum_file = tempnam(sys_get_temp_dir(), 'st-sync-updater-test');
+    st_test_assert(is_string($checksum_file), 'Could not create a temporary updater checksum fixture.');
+    file_put_contents($checksum_file, 'verified update package');
+    $valid_checksum = hash_file('sha256', $checksum_file) . '  service-titan-job-post.zip' . "\n";
+    st_test_assert(
+        $updater->file_matches_checksum($checksum_file, $valid_checksum) &&
+        ! $updater->file_matches_checksum($checksum_file, str_repeat('0', 64) . '  service-titan-job-post.zip' . "\n") &&
+        ! $updater->file_matches_checksum($checksum_file, $valid_checksum . 'unexpected second line'),
+        'Native updater checksum validation did not fail closed.'
+    );
+    $checksum_body = $valid_checksum;
+    $checksum_http_mock = static function ($preempt, $args, $url) use (&$checksum_body) {
+        unset($args);
+        if ('https://github.com/drivej/service-titan-job-posts/releases/download/v99.0.0/service-titan-job-post.zip.sha256' !== $url) {
+            return $preempt;
+        }
+        return [
+            'headers'  => [],
+            'body'     => $checksum_body,
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'cookies'  => [],
+            'filename' => null,
+        ];
+    };
+    add_filter('pre_http_request', $checksum_http_mock, 10, 3);
+    $verified_pre_download = $updater->verify_package_download(
+        $checksum_file,
+        'https://github.com/drivej/service-titan-job-posts/releases/download/v99.0.0/service-titan-job-post.zip',
+        null,
+        ['plugin' => plugin_basename(ST_SYNC_PLUGIN_FILE)]
+    );
+    st_test_assert(
+        $checksum_file === $verified_pre_download,
+        'Native updater did not verify a package supplied by an earlier download filter.'
+    );
+    $checksum_body = str_repeat('0', 64) . '  service-titan-job-post.zip' . "\n";
+    $rejected_pre_download = $updater->verify_package_download(
+        $checksum_file,
+        'https://github.com/drivej/service-titan-job-posts/releases/download/v99.0.0/service-titan-job-post.zip',
+        null,
+        ['plugin' => plugin_basename(ST_SYNC_PLUGIN_FILE)]
+    );
+    st_test_assert(
+        is_wp_error($rejected_pre_download) && is_file($checksum_file),
+        'Native updater did not reject a mismatched checksum without deleting another filter’s file.'
+    );
+    st_test_assert(
+        false === $updater->verify_package_download(
+            false,
+            'https://github.com/drivej/service-titan-job-posts/releases/download/v99.0.0/service-titan-job-post.zip',
+            null,
+            ['plugin' => 'other/other.php']
+        ),
+        'Native updater interfered with another plugin download.'
+    );
+    remove_filter('pre_http_request', $checksum_http_mock, 10);
+    wp_delete_file($checksum_file);
+    remove_filter('pre_http_request', $github_http_mock, 10);
+    delete_site_transient('st_sync_github_release_v1');
+
     $parent_id = wp_insert_post([
         'post_type'   => 'page',
         'post_status' => 'publish',
@@ -864,6 +1021,11 @@ try {
         delete_option('st_sync_options');
     }
     update_option('permalink_structure', $previous_permalink_structure);
+    if (false === $previous_updater_cache) {
+        delete_site_transient('st_sync_github_release_v1');
+    } else {
+        set_site_transient('st_sync_github_release_v1', $previous_updater_cache);
+    }
 }
 
 if ($failure instanceof Throwable) {

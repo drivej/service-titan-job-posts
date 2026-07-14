@@ -315,6 +315,16 @@ artifact without publishing a GitHub Release.
 WordPress plugin header and `ST_SYNC_VERSION` disagree with each other or with
 the tag.
 
+Starting with version 2.2.0, customer builds use WordPress's native plugin
+update system. WordPress checks the latest stable GitHub Release, offers the
+standard **Update now** and **Enable auto-updates** controls, and verifies the
+release ZIP against its published SHA-256 checksum before installation. Release
+metadata must contain exactly the reviewed `service-titan-job-post.zip` and
+`service-titan-job-post.zip.sha256` assets produced by this workflow.
+
+Sites running an earlier version need one final manual ZIP replacement to reach
+2.2.0. Later releases can be installed through the normal WordPress update UI.
+
 ## Validation
 
 Run the repo-level validation script before committing:

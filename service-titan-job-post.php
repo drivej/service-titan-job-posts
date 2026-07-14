@@ -3,7 +3,7 @@
  * Plugin Name:       ServiceTitan Local Job Content
  * Plugin URI:        https://github.com/drivej/service-titan-job-posts
  * Description:       Imports completed ServiceTitan jobs as reviewable, location-specific content.
- * Version:           2.1.0
+ * Version:           2.2.0
  * Author:            Drive
  * License:           GPLv2 or later
  * Update URI:        https://github.com/drivej/service-titan-job-posts
@@ -16,7 +16,7 @@ if (! defined('ABSPATH')) {
     exit;
 }
 
-define('ST_SYNC_VERSION', '2.1.0');
+define('ST_SYNC_VERSION', '2.2.0');
 define('ST_SYNC_PLUGIN_FILE', __FILE__);
 define('ST_SYNC_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ST_SYNC_DEFAULT_SERVICE_URL', '');
@@ -27,6 +27,7 @@ require_once ST_SYNC_PLUGIN_DIR . 'includes/class-permalinks.php';
 require_once ST_SYNC_PLUGIN_DIR . 'includes/class-sync-blocks.php';
 require_once ST_SYNC_PLUGIN_DIR . 'includes/class-sevalla-api.php';
 require_once ST_SYNC_PLUGIN_DIR . 'includes/class-service-client.php';
+require_once ST_SYNC_PLUGIN_DIR . 'includes/class-plugin-updater.php';
 require_once ST_SYNC_PLUGIN_DIR . 'admin/class-st-sync-admin.php';
 
 add_action('plugins_loaded', static function (): void {
@@ -55,3 +56,4 @@ if (is_admin()) {
 new ST_Sync_Permalinks();
 new ST_Sync_Blocks();
 new ST_Sync_Sevalla_API();
+new ST_Sync_Plugin_Updater();
